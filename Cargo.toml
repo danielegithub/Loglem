@@ -1,0 +1,40 @@
+[package]
+name = "loglem"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "A small terminal log collector and searchable SQLite archive"
+license = "MIT"
+publish = false
+
+[features]
+default = []
+allocator-mimalloc = ["dep:mimalloc"]
+
+[dependencies]
+anyhow = "1"
+argon2 = "0.5"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+crossterm = "0.29"
+ed25519-dalek = "2.2"
+flate2 = "1"
+fs2 = "0.4"
+glob = "0.3"
+libc = "0.2"
+mimalloc = { version = "0.1.52", optional = true }
+rusqlite = { version = "0.43", features = ["bundled"] }
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+signal-hook = "0.3"
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+strip = true
+

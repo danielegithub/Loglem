@@ -1,0 +1,15 @@
+/implementation_plan.md
+/target/
+/.devtools/
+/dist/
+/.local/
+/data/
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+__pycache__/
+*.pyc
+/.ci-venv/
+*.pem
+/notes/

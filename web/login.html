@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Loglem · Accesso</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/login.js" defer></script>
+  </head>
+  <body class="login-page">
+    <form id="login-form" class="panel login-panel">
+      <p class="brand-login"><span class="brand-icon">L</span> Loglem</p>
+      <h1>Accedi</h1>
+      <div class="field">
+        <label for="login-user">Nome utente</label>
+        <input id="login-user" autocomplete="username" required />
+      </div>
+      <div class="field">
+        <label for="login-password">Password</label>
+        <input id="login-password" type="password" autocomplete="current-password" required />
+      </div>
+      <p id="login-error" class="card-error" role="alert" hidden></p>
+      <button class="primary" type="submit">Entra</button>
+      <p class="muted">
+        Gli utenti si creano sul server con <code>loglem access user-add NOME</code>.
+      </p>
+    </form>
+  </body>
+</html>
