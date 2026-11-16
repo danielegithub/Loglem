@@ -1,0 +1,136 @@
+name: Build signed Linux release draft
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Validate release version and public key
+        env:
+          LOGLEM_UPDATE_PUBLIC_KEY: ${{ vars.LOGLEM_UPDATE_PUBLIC_KEY }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$GITHUB_REF_NAME" = "v$version"
+          test "$(printf '%s' "$LOGLEM_UPDATE_PUBLIC_KEY" | base64 --decode | wc -c)" -eq 32
+      - run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          if [ -f Cargo.lock ]; then
+            cargo fetch --locked
+          else
+            cargo generate-lockfile
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-lock
+          path: Cargo.lock
+          if-no-files-found: error
+
+  build:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      LOGLEM_RELEASE_REPO: ${{ github.repository }}
+      LOGLEM_UPDATE_PUBLIC_KEY: ${{ vars.LOGLEM_UPDATE_PUBLIC_KEY }}
+      LOGLEM_TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-lock
+      - run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          cargo build --locked --release
+          target/release/loglem self-check
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)
+          bundle="loglem-$version-$LOGLEM_TARGET"
+          mkdir -p target/release-assets "target/package/$bundle"
+          install -m 755 target/release/loglem "target/release-assets/loglem-$LOGLEM_TARGET"
+          install -m 755 target/release/loglem "target/package/$bundle/loglem"
+          install -m 755 .github/install.sh "target/package/$bundle/install.sh"
+          cp README.md LICENSE Cargo.lock "target/package/$bundle/"
+          tar -czf "target/release-assets/$bundle.tar.gz" -C target/package "$bundle"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.target }}
+          path: target/release-assets/*
+          if-no-files-found: error
+
+  draft:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*-unknown-linux-gnu
+          path: target/release-assets
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-lock
+          path: target/release-assets
+      - name: Sign artifacts
+        env:
+          LOGLEM_RELEASE_PRIVATE_KEY: ${{ secrets.LOGLEM_RELEASE_PRIVATE_KEY }}
+          LOGLEM_UPDATE_PUBLIC_KEY: ${{ vars.LOGLEM_UPDATE_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          signing_dir=$(mktemp -d)
+          trap 'rm -rf "$signing_dir"' EXIT
+          printf '%s' "$LOGLEM_RELEASE_PRIVATE_KEY" > "$signing_dir/private.pem"
+          openssl pkey -in "$signing_dir/private.pem" -pubout -outform DER -out "$signing_dir/public.der"
+          test "$(wc -c < "$signing_dir/public.der")" -eq 44
+          public=$(tail -c 32 "$signing_dir/public.der" | openssl base64 -A)
+          test "$public" = "$LOGLEM_UPDATE_PUBLIC_KEY"
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)
+          assets="$GITHUB_WORKSPACE/target/release-assets"
+          artifacts='[]'
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+            name="loglem-$target"
+            size=$(stat -c %s "$assets/$name")
+            digest=$(sha256sum "$assets/$name" | cut -d ' ' -f 1)
+            artifacts=$(jq -c --arg target "$target" --arg name "$name" --argjson size "$size" --arg sha256 "$digest" '. + [{target: $target, name: $name, size: $size, sha256: $sha256}]' <<< "$artifacts")
+          done
+          jq -cn --arg version "$version" --argjson artifacts "$artifacts" '{format: 1, version: $version, schema: 1, artifacts: $artifacts}' > "$assets/manifest.json"
+          openssl pkeyutl -sign -inkey "$signing_dir/private.pem" -rawin -in "$assets/manifest.json" -out "$assets/manifest.sig"
+          (
+            cd "$assets"
+            sha256sum loglem-* > SHA256SUMS
+            openssl pkeyutl -sign -inkey "$signing_dir/private.pem" -rawin -in SHA256SUMS -out SHA256SUMS.sig
+          )
+      - name: Create draft for maintainer review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" target/release-assets/* --verify-tag --draft --title "Loglem $GITHUB_REF_NAME" --notes-file .github/release-notes.md
+

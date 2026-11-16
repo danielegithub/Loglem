@@ -1,0 +1,38 @@
+name: Linux checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+          rustup default stable
+      - name: Check and build Rust
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets
+          cargo build --locked --release
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dependency-lock-${{ matrix.runner }}
+          path: Cargo.lock
+          if-no-files-found: error
+
