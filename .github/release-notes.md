@@ -1,11 +1,13 @@
-Experimental Linux terminal release of Loglem.
+Experimental release of Loglem. Read the limitations before use (`docs/limitations.md`).
 
-- File and Podman log collection into per-source SQLite archives.
-- Keyboard-driven terminal interface and non-interactive commands.
-- Source status, literal text/date search, and per-source retention.
-- Linux systemd user-service integration and signed binary update code.
+- Reads log files (also rotated and `.gz`), Caddy, Nginx, Apache, Podman, Docker, Kubernetes and the Linux journal into one SQLite archive per source.
+- Web page and terminal menu. Search with filters, live view, statistics, `loglem tail`.
+- Retention per source. Optional cleanup of original files: copied, checked byte by byte, then deleted only after 24 hours without changes.
+- Service for Linux (systemd) and macOS (launchd). Login, roles and reverse proxy for other computers.
+- Alerts, backup and restore, proof mode with time stamps.
+- Personal data: IP masking, erase and export of one person's lines, access log.
+- Signed binary updates (Linux).
 
-Read the limitations in the README before use. Automatic cleanup of active producer files is not enabled. A filename or a date is not proof that a producer has closed a file.
+Not tested on a real Linux machine: the systemd service, a real Kubernetes cluster, and updates from a published release.
 
-Download the `.tar.gz` matching your Linux architecture. Verify the signed checksums using the publisher's independently obtained public key, extract the package, and run `sh install.sh`. Raw `loglem-*` files are also provided for the updater.
-
+Download the `.tar.gz` matching your Linux architecture. Verify the signed checksums with the publisher's independently obtained public key, extract the package, and run `sh install.sh`. Raw `loglem-*` files are also provided for the updater.
