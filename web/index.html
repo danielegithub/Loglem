@@ -82,14 +82,15 @@
           </div>
           <div class="filter-dates">
             <div class="field">
-              <label for="search-from">Dal giorno</label>
+              <label for="search-from">Dal giorno (UTC)</label>
               <input id="search-from" type="date" />
             </div>
             <div class="field">
-              <label for="search-to">Al giorno (incluso)</label>
+              <label for="search-to">Al giorno, incluso (UTC)</label>
               <input id="search-to" type="date" />
             </div>
-            <span class="hint">Le date sono in UTC</span>
+          </div>
+          <div class="filter-options">
             <div class="severity-filter" role="group" aria-label="Gravità da mostrare">
               <span class="severity-title">Mostra</span>
               <label class="level-check level-info">
@@ -102,7 +103,12 @@
                 <input type="checkbox" id="show-error" checked /> Errori
               </label>
             </div>
-            <details class="advanced-filters">
+            <label class="checkbox live-toggle">
+              <input type="checkbox" id="live" checked /> Diretta: le righe nuove compaiono in cima
+              appena arrivano
+            </label>
+          </div>
+          <details class="advanced-filters">
               <summary>Filtri avanzati</summary>
               <div class="filter-dates">
                 <label class="checkbox">
@@ -122,12 +128,7 @@
                 </div>
               </div>
               <small>Gravità e codice si riconoscono dal testo della riga (JSON di Caddy, Nginx, Apache, journal). Una riga senza «ERROR» o «WARN» conta come info.</small>
-            </details>
-            <label class="checkbox">
-              <input type="checkbox" id="live" checked /> Diretta: le righe nuove compaiono in cima
-              appena arrivano
-            </label>
-          </div>
+          </details>
         </form>
         <div id="log-source-status" class="inline-status" role="status"></div>
         <div class="panel log-panel">

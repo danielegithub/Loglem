@@ -1034,7 +1034,7 @@ dialog::backdrop {
 }
 
 .advanced-filters {
-  margin-top: 8px;
+  margin-top: 14px;
 }
 
 .advanced-filters summary {
@@ -1179,12 +1179,26 @@ button.danger {
   color: var(--level-error);
 }
 
+/* Terza riga dei filtri: gravità e diretta, allineate a sinistra sulla stessa linea. */
+.filter-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 32px;
+  margin-top: 16px;
+}
+
+.filter-options .checkbox {
+  margin: 0;
+  font-size: 13px;
+  align-items: center;
+}
+
 .severity-filter {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 18px;
-  margin: 10px 0;
 }
 
 .severity-title {
@@ -1330,4 +1344,8 @@ button.danger {
 
 .advice-note a.text-link {
   margin: 0;
+}
+
+.source-card details {
+  margin-top: 14px;
 }
