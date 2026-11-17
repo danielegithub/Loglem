@@ -73,7 +73,7 @@ impl Filter {
         }
     }
 
-    fn apply(&self, command: &mut Command) {
+    pub(crate) fn apply(&self, command: &mut Command) {
         for unit in &self.units {
             command.arg(format!("--unit={unit}"));
         }

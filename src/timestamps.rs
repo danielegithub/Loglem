@@ -72,6 +72,8 @@ impl<'de: 'a, 'a> Deserialize<'de> for Stamp<'a> {
 
 #[derive(Deserialize)]
 struct LogDates<'a> {
+    #[serde(borrow, rename = "StartUTC")]
+    start: Option<Stamp<'a>>,
     #[serde(borrow)]
     ts: Option<Stamp<'a>>,
     #[serde(borrow)]
@@ -125,6 +127,7 @@ pub fn event_time(text: &str, collected: i64) -> (i64, &'static str) {
         for (value, numeric) in [
             (dates.ts, true),
             (dates.timestamp, false),
+            (dates.start, false),
             (dates.time, false),
             (dates.at_timestamp, false),
         ] {

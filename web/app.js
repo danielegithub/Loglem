@@ -5,6 +5,8 @@ const token = document.querySelector('meta[name="loglem-token"]').content;
 
 const REFRESH_MS = 2000;
 const PAGES = {
+  rules: ['Regole e siti', 'Gestisci le classi, le quote degli archivi e le assegnazioni.'],
+  inventory: ['Mappa del server', 'Sorgenti visibili su questo server e collegamenti a Loglem.'],
   sources: ['Le tue sorgenti', 'Qui vedi da dove Loglem legge i log e quanto spazio occupano.'],
   logs: ['Esplora i log', 'Scegli una sorgente, cerca una parola e filtra per data.'],
   add: ['Aggiungi una sorgente', 'Tre passaggi per iniziare a salvare i log.'],
@@ -330,6 +332,13 @@ function syncSourceSelect() {
   const select = $('search-source');
   const previous = select.value;
   // Ricostruisce l'elenco solo se nomi o etichette sono cambiati.
+  const sites = [...new Set(state.sources.map(s=>s.site).filter(Boolean))].sort();
+  const site = $('search-site');
+  if (JSON.stringify(sites) !== JSON.stringify([...site.options].slice(1).map(o=>o.value))) {
+    const chosen=site.value;
+    site.replaceChildren(new Option('Tutti i siti',''),...sites.map(s=>new Option(s,s)));
+    if(sites.includes(chosen)) site.value=chosen;
+  }
   const wanted = JSON.stringify(state.sources.map((s) => [s.source, sourceOptionLabel(s)]));
   const current = JSON.stringify([...select.options].slice(1).map((o) => [o.value, o.textContent]));
   if (wanted === current) return;
@@ -452,7 +461,8 @@ async function search(showErrors = true) {
   const sequence = ++searchSequence;
   const query = $('search-text').value;
   try {
-    const { rows } = await api('search', {
+    const { rows, ranking } = await api('search', {
+      site:$('search-site').value, question:$('search-question').value,
       ...currentQuery(),
       from: $('search-from').value,
       to: $('search-to').value,
@@ -465,7 +475,11 @@ async function search(showErrors = true) {
         : rows.length + (rows.length === 1 ? ' riga' : ' righe') + ' (le più recenti, fino a 200)';
     const list = $('search-results');
     list.replaceChildren();
-    if (rows.length === 0) renderNoResults(list);
+    if ($('search-question').value === '404') {
+      $('result-count').textContent = (ranking || []).length + ' indirizzi IP';
+      for (const [ip,count] of ranking || []) list.append(element('p',ip+' · '+count+' risposte 404'));
+    }
+    if (rows.length === 0 && !ranking?.length) renderNoResults(list);
     for (const row of rows) list.append(renderLogRow(row, query));
     startLive();
   } catch (error) {
@@ -488,7 +502,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // La diretta ha senso solo guardando i log senza una data di fine.
 function liveWanted() {
-  return view === 'logs' && $('live').checked && !$('search-to').value;
+  return !$('search-site').value && !$('search-question').value && view === 'logs' && $('live').checked && !$('search-to').value;
 }
 
 function stopLive() {
@@ -538,6 +552,7 @@ function currentQuery() {
 }
 
 function clearSearch() {
+  $('search-site').value=''; $('search-question').value=''; $('live').disabled=false;
   for (const id of ['search-ip', 'search-path', 'search-status']) $(id).value = '';
   for (const name of LEVEL_CHECKS) $('show-' + name).checked = true;
   $('search-text').value = '';
@@ -553,7 +568,7 @@ function showWizardStep(step) {
     item.classList.toggle('current', Number(item.dataset.step) === step);
   }
   $('add-type').hidden = step !== 1;
-  $('folder-step').hidden = !(step === 2 && (addKind === 'folder' || addKind === 'caddy'));
+  $('folder-step').hidden = !(step === 2 && (['folder','caddy','traefik'].includes(addKind)));
   $('podman-step').hidden = !(step === 2 && (addKind === 'podman' || addKind === 'docker'));
   $('kubernetes-step').hidden = !(step === 2 && addKind === 'kubernetes');
   $('journal-step').hidden = !(step === 2 && addKind === 'journal');
@@ -589,7 +604,7 @@ async function openFolder(path = '') {
 function logFileItem(file) {
   const item = element('li');
   const name = file.split('/').pop();
-  if (addKind !== 'caddy') {
+  if (!['caddy','traefik'].includes(addKind)) {
     item.textContent = name;
     return item;
   }
@@ -597,7 +612,8 @@ function logFileItem(file) {
   button.type = 'button';
   button.addEventListener('click', () => {
     const stem = name.replace(/\.log$/, '');
-    configureSource({ kind: 'caddy', path: file }, 'Log di Caddy · ' + file, 'caddy-' + stem);
+    const caddy=addKind==='caddy';
+    configureSource({ kind:caddy?'caddy':'file', path:file }, (caddy?'Caddy':'Traefik')+' · '+file,(caddy?'caddy-':'traefik-')+stem);
     $('source-kind').value = 'access';
   });
   item.append(button);
@@ -618,7 +634,7 @@ function prepareFolderStep() {
   $('folder-preview-help').textContent = caddy
     ? 'I file ruotati da Caddy (es. access-2026-11-16T10-00-00.000.log) vengono letti in automatico.'
     : 'Vengono letti i file .log di questa cartella, anche quelli futuri. Le sottocartelle sono escluse.';
-  $('use-folder').hidden = caddy;
+  $('use-folder').hidden = caddy || addKind==='traefik';
 }
 
 function containerChoice(c, connection) {
@@ -1295,6 +1311,7 @@ function route() {
   stopLive();
 
   if (view === 'logs') {
+    if(id){$('search-site').value=''; $('search-question').value=''; $('live').disabled=false;}
     try {
       $('search-source').value = id ? decodeURIComponent(id) : '';
     } catch (_) {
@@ -1323,12 +1340,14 @@ function route() {
       ? settingsSource.label || settingsSource.source
       : 'Sorgente non trovata';
     if (settingsSource) populateSettings();
+  } else if (view === 'rules' || view === 'system') {
+    loadRulesPage().catch(e=>showNotice(e.message,true));
+    if (view === 'system') showUpdateStatus();
   } else if (view === 'diagnostics') {
     loadDiagnostics();
   } else if (view === 'privacy') {
     prepareProtection();
-  } else if (view === 'system') {
-    showUpdateStatus();
+
   } else if (view === 'stats') {
     statsSource = decodeURIComponent(id);
     loadStats();
@@ -1572,6 +1591,8 @@ function populateSettings() {
 
   $('settings-label').value = s.label || s.source;
   $('settings-kind').value = s.log_kind || 'generic';
+  $('retention-days').disabled = $('retention-unit').disabled = !!s.class;
+  $('retention-class-note').textContent = s.class ? 'Durata definita dalla classe '+s.class+' in Regole e siti.' : '';
   $('retention-days').value = period.amount;
   $('retention-unit').value = period.unit;
 
@@ -1823,9 +1844,9 @@ $('logout').addEventListener('click', async () => {
   location.reload();
 });
 
-(async () => {
+window.addEventListener('DOMContentLoaded', async () => {
   await loadUser().catch(() => {});
   await refresh();
   route();
   setInterval(refresh, REFRESH_MS);
-})();
+});

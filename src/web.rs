@@ -331,6 +331,10 @@ fn serve_static(stream: TcpStream, route: &str, csrf: Option<&str>) -> Result<()
             "text/html; charset=utf-8",
             include_bytes!("../web/login.html").as_slice().into(),
         ),
+        ("/rules.js", _) => (
+            "application/javascript; charset=utf-8",
+            include_bytes!("../web/rules.js").as_slice().into(),
+        ),
         ("/app.js", _) => (
             "text/javascript; charset=utf-8",
             include_bytes!("../web/app.js").as_slice().into(),
@@ -467,6 +471,11 @@ fn audited(route: &str, body: &Value) -> Option<(&'static str, String)> {
         )),
         "/api/stats" => Some(("statistiche", format!("sorgente: {source}"))),
         "/api/config-export" => Some(("esporta impostazioni", String::new())),
+        "/api/rule-change" => Some((
+            "modifica regole",
+            body["action"].as_str().unwrap_or("").to_owned(),
+        )),
+        "/api/backup-create" | "/api/backup-transfer" => Some(("backup", route.to_owned())),
         "/api/config-import" => Some(("importa impostazioni", String::new())),
         "/api/update-install" => Some(("aggiornamento", String::new())),
         "/api/add" => Some((
@@ -732,6 +741,49 @@ struct NewSource {
 fn api(route: &str, app: &App, body: Value) -> Result<Value> {
     let dir = &app.dir;
     match route {
+        "/api/rules" => {
+            let cfg = config::load(dir)?;
+            Ok(
+                json!({"rules":cfg.rules,"alerts":cfg.alerts.rules,"backup_status":crate::remote_backup::status(dir)}),
+            )
+        }
+        "/api/rule-change" => {
+            crate::rules::change(dir, body)?;
+            app.worker.request();
+            Ok(json!({"message":"Regole salvate"}))
+        }
+        "/api/inventory-size" => crate::inventory::message_bytes(&body),
+        "/api/inventory" => crate::inventory::scan(dir),
+        "/api/proof-verify" => {
+            let name = text(&body, "source")?;
+            config::source(dir, name)?;
+            let v = crate::proof::verify_source(dir, name)?;
+            Ok(json!({"message":v.report,"problems":v.problems}))
+        }
+        "/api/backup-create" | "/api/backup-verify" => {
+            let target = Path::new(text(&body, "target")?);
+            anyhow::ensure!(target.is_absolute(), "Indica una cartella assoluta");
+            let message = if route.ends_with("create") {
+                crate::backup::create(dir, target)?;
+                crate::backup::verify(target)?
+            } else {
+                crate::backup::verify(target)?
+            };
+            Ok(json!({"message":message}))
+        }
+        "/api/backup-transfer" => {
+            anyhow::ensure!(
+                config::load(dir)?.rules.remote.is_some(),
+                "Configura il backup remoto"
+            );
+            let folder = dir.to_path_buf();
+            std::thread::spawn(move || {
+                if let Err(e) = crate::remote_backup::run(&folder, true) {
+                    crate::diagnostics::error("backup", "manual", None, &e)
+                }
+            });
+            Ok(json!({"message":"Trasferimento richiesto. Consulta l’esito del backup."}))
+        }
         "/api/status" => {
             let sources = collector::statuses(dir)?;
             let mut problems =
@@ -1066,6 +1118,17 @@ fn api(route: &str, app: &App, body: Value) -> Result<Value> {
                     None => Ok(default),
                 }
             };
+            if ["site", "question"]
+                .iter()
+                .any(|k| body[*k].as_str().is_some_and(|s| !s.is_empty()))
+            {
+                return crate::questions::search(
+                    dir,
+                    &body,
+                    parse("from", false, i64::MIN)?,
+                    parse("to", true, i64::MAX)?,
+                );
+            }
             let rows = collector::search(
                 dir,
                 body.get("source")

@@ -33,6 +33,7 @@ impl Worker {
         let thread_state = state.clone();
         let join = thread::spawn(move || {
             let (mutex, wake) = &*thread_state;
+            let mut backup_task: Option<JoinHandle<()>> = None;
             loop {
                 {
                     let mut state = mutex.lock().unwrap_or_else(|p| p.into_inner());
@@ -54,6 +55,20 @@ impl Worker {
                         .map(|p| crate::alerts::hide_acknowledged(&dir, p));
                 if let Err(error) = problems.and_then(|p| crate::alerts::after_cycle(&dir, p)) {
                     crate::diagnostics::error("alerts", "after_cycle", None, &error);
+                }
+                if backup_task.as_ref().is_none_or(|task| task.is_finished())
+                    && crate::config::load(&dir).is_ok_and(|c| {
+                        c.rules
+                            .remote
+                            .is_some_and(|plan| plan.due(&crate::remote_backup::status(&dir)))
+                    })
+                {
+                    let folder = dir.clone();
+                    backup_task = Some(thread::spawn(move || {
+                        if let Err(error) = crate::remote_backup::run(&folder, false) {
+                            crate::diagnostics::error("backup", "transfer", None, &error);
+                        }
+                    }));
                 }
                 let seconds = crate::config::load(&dir)
                     .map(|c| c.poll_seconds)

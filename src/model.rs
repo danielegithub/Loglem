@@ -5,6 +5,10 @@ use std::path::PathBuf;
 pub struct Source {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub journal_runtime: Option<crate::sources::podman::Runtime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub site: String,
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -120,6 +124,8 @@ impl Default for Source {
         Self {
             id: String::new(),
             journal_runtime: None,
+            class: None,
+            site: String::new(),
             label: None,
             retention: None,
             log_kind: LogKind::Generic,
@@ -178,6 +184,8 @@ pub struct UpdateSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub rules: crate::rules::Rules,
     pub version: u32,
     pub poll_seconds: u64,
     pub sources: Vec<Source>,
@@ -195,6 +203,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            rules: Default::default(),
             version: 1,
             poll_seconds: 5,
             sources: vec![],
@@ -259,6 +268,9 @@ pub struct SearchRow {
 #[derive(Debug, Clone, Serialize)]
 pub struct SourceStatus {
     pub journal_runtime: Option<crate::sources::podman::Runtime>,
+    pub class: Option<String>,
+    pub site: String,
+    pub proof: Option<crate::proof::Proof>,
     pub input: Input,
     pub archive_dir: Option<PathBuf>,
     pub label: String,

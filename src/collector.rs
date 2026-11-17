@@ -31,6 +31,10 @@ fn cycle(dir: &Path) -> Result<()> {
             failures.push(format!("{}: {error:#}", source.id));
         }
     }
+    if let Err(e) = crate::rules::maintain(dir, &config) {
+        crate::diagnostics::error("rules", "storage", None, &e);
+        failures.push(e.to_string());
+    }
     if !failures.is_empty() {
         bail!("{}", failures.join("\n"));
     }
@@ -145,7 +149,7 @@ fn caddy_margin(source: &Source) -> Option<String> {
 
 /// Toglie le copie scadute. In modalità prova solo giorni interi già sigillati.
 fn expire(dir: &Path, archive: &mut Archive, source: &Source, cutoff: i64, now: i64) -> Result<()> {
-    if source.proof.is_some() {
+    if source.proof.is_some() || crate::proof::chain_path(dir, &source.id).exists() {
         crate::proof::expire(dir, source, archive, cutoff, now)
     } else {
         archive.retain_since(cutoff).map(|_| ())
@@ -374,6 +378,9 @@ pub fn statuses(dir: &Path) -> Result<Vec<SourceStatus>> {
             };
             Ok(SourceStatus {
                 journal_runtime: source.journal_runtime,
+                class: source.class.clone(),
+                site: source.site.clone(),
+                proof: source.proof.clone(),
                 input: source.input.clone(),
                 archive_dir: source.archive_dir.clone(),
                 label: source.label.clone().unwrap_or_else(|| source.id.clone()),

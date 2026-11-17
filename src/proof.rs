@@ -189,7 +189,7 @@ fn day_hash(store: &Archive, start: i64, previous: &str) -> Result<(String, i64)
     let mut hash = Sha256::new();
     hash.update(previous.as_bytes());
     let mut select = store.db.prepare(
-        "SELECT id, event_ns, collected_ns, message FROM entries \
+        "SELECT id, event_ns, collected_ns, message FROM log_rows \
          WHERE collected_ns >= ?1 AND collected_ns < ?2 ORDER BY id",
     )?;
     let mut rows = select.query(params![start, start + DAY])?;
@@ -292,6 +292,13 @@ pub fn expire(dir: &Path, source: &Source, store: &Archive, cutoff: i64, now: i6
                 append(&path, &serde_json::to_string(&line)?)?;
             }
         }
+    }
+    if source.proof.is_none() {
+        // Dopo la disattivazione, applica la durata normale solo alle righe successive all’ultimo giorno sigillato.
+        store.db.execute(
+            "DELETE FROM entries WHERE collected_ns>=?1 AND (collected_ns<?2 OR event_ns<?2)",
+            params![last + DAY, cutoff],
+        )?;
     }
     Ok(())
 }

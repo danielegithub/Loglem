@@ -54,7 +54,52 @@ pub fn find_all() -> Vec<Found> {
     let caddy = locations("LOGLEM_CADDYFILE", CADDYFILES);
     let nginx = locations("LOGLEM_NGINX_CONF", NGINX);
     let apache = locations("LOGLEM_APACHE_CONF", APACHE);
-    find_in(&as_str(&caddy), &as_str(&nginx), &as_str(&apache))
+    let mut found = find_in(&as_str(&caddy), &as_str(&nginx), &as_str(&apache));
+    for conf in locations(
+        "LOGLEM_TRAEFIK_CONF",
+        &[
+            "/etc/traefik/traefik.yaml",
+            "/etc/traefik/traefik.yml",
+            "/etc/traefik/traefik.toml",
+            "/etc/traefik/traefik.json",
+        ],
+    ) {
+        let file = Path::new(&conf);
+        if !file.is_file() {
+            continue;
+        }
+        let text = read(file);
+        let mut access = false;
+        let mut path = None;
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+            path = value["accessLog"]["filePath"].as_str().map(PathBuf::from);
+        } else {
+            for raw in text.lines() {
+                let line = raw.split('#').next().unwrap_or("").trim();
+                if line.is_empty() {
+                    continue;
+                }
+                if line.starts_with('[')
+                    || (!raw.starts_with(char::is_whitespace) && line.ends_with(':'))
+                {
+                    access = line.eq_ignore_ascii_case("[accesslog]")
+                        || line.eq_ignore_ascii_case("accessLog:");
+                } else if access {
+                    if let Some((key, value)) = line.split_once([':', '=']) {
+                        if key.trim().eq_ignore_ascii_case("filePath") {
+                            path = Some(PathBuf::from(
+                                value.trim().trim_matches(['"', char::from(39)]),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(path) = path.filter(|p| p.is_absolute()) {
+            found.push(entry("file", "Traefik", path, file));
+        }
+    }
+    found
 }
 
 pub fn find_in(caddyfiles: &[&str], nginx: &[&str], apache: &[&str]) -> Vec<Found> {

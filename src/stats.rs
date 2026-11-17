@@ -9,16 +9,20 @@ use std::{collections::HashMap, path::Path};
 
 /// Una richiesta HTTP riconosciuta in una riga di log.
 #[derive(Debug, PartialEq)]
-struct Request {
+pub(crate) struct Request {
     path: String,
-    status: u16,
-    ip: Option<String>,
+    pub(crate) status: u16,
+    pub(crate) ip: Option<String>,
     duration_ms: Option<f64>,
 }
 
-fn parse(line: &str) -> Option<Request> {
-    if line.trim_start().starts_with('{') {
-        parse_caddy(line)
+pub(crate) fn parse(line: &str) -> Option<Request> {
+    let payload = line
+        .split_once(": {")
+        .filter(|(prefix, _)| !prefix.contains('{'))
+        .map_or(line, |(prefix, _)| &line[prefix.len() + 2..]);
+    if payload.trim_start().starts_with('{') {
+        parse_caddy(payload)
     } else {
         parse_combined(line)
     }
@@ -27,6 +31,14 @@ fn parse(line: &str) -> Option<Request> {
 /// `{"request":{"uri":"/a?x=1","remote_ip":"…"},"status":200,"duration":0.012}`
 fn parse_caddy(line: &str) -> Option<Request> {
     let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    if let Some(path) = value["RequestPath"].as_str() {
+        return Some(Request {
+            path: path.split('?').next()?.into(),
+            status: u16::try_from(value["DownstreamStatus"].as_u64()?).ok()?,
+            ip: value["ClientHost"].as_str().map(str::to_owned),
+            duration_ms: value["Duration"].as_f64().map(|v| v / 1_000_000.0),
+        });
+    }
     let request = value.get("request")?;
     let uri = request.get("uri")?.as_str()?;
     let ip = ["client_ip", "remote_ip"]
@@ -114,7 +126,7 @@ pub fn compute(dir: &Path, source: &str, days: u32) -> Result<Stats> {
     let archive = Archive::open(&path)?;
     let mut select = archive
         .db
-        .prepare("SELECT event_ns, message FROM entries WHERE event_ns >= ?1")?;
+        .prepare("SELECT event_ns, message FROM log_rows WHERE event_ns >= ?1")?;
     let mut rows = select.query([since])?;
     while let Some(row) = rows.next()? {
         let message: String = row.get(1)?;

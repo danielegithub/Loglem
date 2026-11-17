@@ -49,7 +49,7 @@ pub fn preview(dir: &Path, source: Option<&str>, query: &Query) -> Result<Vec<(S
         }
         let archive = Archive::open(&path)?;
         let count: i64 = archive.db.query_row(
-            &format!("SELECT count(*) FROM entries WHERE 1 = 1{filters}"),
+            &format!("SELECT count(*) FROM log_rows WHERE 1 = 1{filters}"),
             params_from_iter(values.clone()),
             |r| r.get(0),
         )?;
@@ -122,7 +122,7 @@ pub fn erase(
         {
             let mut select = archive.db.prepare(&format!(
                 "SELECT strftime('%Y-%m-%d', collected_ns / 1000000000, 'unixepoch'), count(*) \
-                 FROM entries WHERE 1 = 1{filters} GROUP BY 1"
+                 FROM log_rows WHERE 1 = 1{filters} GROUP BY 1"
             ))?;
             let mut rows = select.query(params_from_iter(values.clone()))?;
             while let Some(row) = rows.next()? {
@@ -141,7 +141,7 @@ pub fn erase(
         }
         archive.db.execute(
             &format!(
-                "DELETE FROM entries WHERE id IN (SELECT id FROM entries WHERE 1 = 1{filters})"
+                "DELETE FROM entries WHERE id IN (SELECT id FROM log_rows WHERE 1 = 1{filters})"
             ),
             params_from_iter(values.clone()),
         )?;
@@ -197,7 +197,7 @@ pub fn export(
         }
         let archive = Archive::open(&path)?;
         let mut select = archive.db.prepare(&format!(
-            "SELECT event_ns, timestamp_origin, message FROM entries WHERE 1 = 1{filters} \
+            "SELECT event_ns, timestamp_origin, message FROM log_rows WHERE 1 = 1{filters} \
              ORDER BY event_ns, id"
         ))?;
         let mut rows = select.query(params_from_iter(values.clone()))?;

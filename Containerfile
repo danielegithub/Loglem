@@ -25,7 +25,9 @@ RUN touch src/main.rs src/lib.rs \
     && ./target/release/loglem self-check
 
 FROM docker.io/library/debian:bookworm-slim
-RUN useradd --create-home --uid 10001 loglem \
+RUN apt-get update && apt-get install -y --no-install-recommends gpg rsync openssh-client ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 loglem \
     && mkdir /data /logs \
     && chown loglem /data
 COPY --from=build /src/target/release/loglem /usr/local/bin/loglem

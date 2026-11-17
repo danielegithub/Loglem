@@ -135,6 +135,8 @@ pub fn apply(store: &Archive, privacy: &Privacy, now: i64) -> Result<usize> {
         return Ok(0);
     };
     let until = now - i64::from(days) * 86_400 * 1_000_000_000;
+    let policy = serde_json::to_string(privacy)?;
+    let changed_policy = store.get_state("privacy_policy")?.as_deref() != Some(&policy);
     let done_until: i64 = store
         .get_state(DONE_UNTIL)?
         .and_then(|s| s.parse().ok())
@@ -143,34 +145,47 @@ pub fn apply(store: &Archive, privacy: &Privacy, now: i64) -> Result<usize> {
         .get_state(LAST_RUN)?
         .and_then(|s| s.parse().ok())
         .unwrap_or(i64::MIN);
-    let mut select = store.db.prepare(
-        "SELECT id, message FROM entries WHERE event_ns <= ?1 \
-         AND (event_ns > ?2 OR collected_ns >= ?3)",
-    )?;
-    let rows: Vec<(i64, String)> = select
-        .query_map(params![until, done_until, last_run], |r| {
-            Ok((r.get(0)?, r.get(1)?))
-        })?
-        .collect::<rusqlite::Result<_>>()?;
+    let done_until = if changed_policy { i64::MIN } else { done_until };
     let mut changed = 0;
-    for (id, message) in rows {
-        let mut text = message.clone();
-        if !privacy.keep_fields.is_empty() {
-            text = keep_json_fields(&text, &privacy.keep_fields).unwrap_or(text);
+    let mut cursor = 0i64;
+    loop {
+        // Ordine stabile per id: una nuova classe può richiedere il trattamento di tutto lo storico.
+        let tx = store.db.unchecked_transaction()?;
+        let mut stmt = tx.prepare(
+            "SELECT id,message FROM log_rows WHERE id>?1 AND event_ns<=?2
+            AND (event_ns>?3 OR collected_ns>=?4) ORDER BY id LIMIT 128",
+        )?;
+        let mut rows = stmt.query(params![cursor, until, done_until, last_run])?;
+        let mut count = 0;
+        while let Some(row) = rows.next()? {
+            cursor = row.get(0)?;
+            let message: String = row.get(1)?;
+            let mut text = message.clone();
+            if !privacy.keep_fields.is_empty() {
+                text = keep_json_fields(&text, &privacy.keep_fields).unwrap_or(text);
+            }
+            if privacy.mask_ips_after_days.is_some() {
+                text = mask_ips(&text);
+            }
+            if text != message {
+                tx.execute(
+                    "UPDATE entries SET message=?1 WHERE id=?2",
+                    params![text, cursor],
+                )?;
+                changed += 1;
+            }
+            count += 1;
         }
-        if privacy.mask_ips_after_days.is_some() {
-            text = mask_ips(&text);
-        }
-        if text != message {
-            store.db.execute(
-                "UPDATE entries SET message = ?1 WHERE id = ?2",
-                params![text, id],
-            )?;
-            changed += 1;
+        drop(rows);
+        drop(stmt);
+        tx.commit()?;
+        if count < 128 {
+            break;
         }
     }
     store.set_state(DONE_UNTIL, &until.max(done_until).to_string())?;
     store.set_state(LAST_RUN, &now.to_string())?;
+    store.set_state("privacy_policy", &policy)?;
     Ok(changed)
 }
 

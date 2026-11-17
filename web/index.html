@@ -7,6 +7,7 @@
     <title>Loglem · Sorgenti</title>
     <link rel="stylesheet" href="style.css" />
     <script src="app.js" defer></script>
+    <script src="rules.js" defer></script>
   </head>
   <body>
     <aside class="sidebar">
@@ -19,6 +20,8 @@
         <a href="#sources" data-nav="sources"><span aria-hidden="true">◫</span> Sorgenti</a>
         <a href="#logs" data-nav="logs"><span aria-hidden="true">≡</span> Esplora i log</a>
         <a href="#add" data-nav="add" class="admin-only"><span aria-hidden="true">＋</span> Aggiungi sorgente</a>
+        <a href="#rules" data-nav="rules" class="admin-only"><span aria-hidden="true">▤</span> Regole e siti</a>
+        <a href="#inventory" data-nav="inventory" class="admin-only"><span aria-hidden="true">⌖</span> Mappa del server</a>
         <a href="#diagnostics" data-nav="diagnostics"><span aria-hidden="true">⌁</span> Problemi</a>
         <a href="#privacy" data-nav="privacy" class="admin-only"><span aria-hidden="true">⚖</span> Dati personali</a>
         <a href="#system" data-nav="system" class="admin-only"><span aria-hidden="true">⚙</span> Sistema</a>
@@ -66,6 +69,10 @@
       <section id="view-logs" data-view="logs" hidden>
         <div id="advice-panel" class="panel advice" hidden></div>
         <form id="search-form" class="panel filters">
+          <div class="filter-dates">
+            <label>Sito <select id="search-site"><option value="">Tutti i siti</option></select></label>
+            <label>Domanda <select id="search-question"><option value="">Ricerca libera</option><option value="admin">Accessi riusciti come root o deploy</option><option value="cron">Errori segnalati da cron</option><option value="5xx">Richieste HTTP con risposta 5xx</option><option value="404">IP con più risposte 404</option></select></label>
+          </div>
           <div class="filter-main">
             <div class="field">
               <label for="search-source">Sorgente</label>
@@ -157,6 +164,8 @@
           <h2>Da dove vuoi leggere i log?</h2>
           <p class="muted">Scegli il tipo di sorgente: poi ti guido passo per passo.</p>
           <div class="type-grid">
+            <button id="choose-cron" class="type-card"><span class="type-icon">◷</span><strong>Cron</strong><span>Esecuzioni e problemi registrati nel journal</span><span class="type-link">›</span></button>
+            <button id="choose-traefik" class="type-card"><span class="type-icon">⇄</span><strong>Accessi Traefik</strong><span>File di accesso in formato JSON o CLF</span><span class="type-link">›</span></button>
             <button id="choose-folder" class="type-card">
               <span class="type-icon">▱</span>
               <strong>Una cartella di file .log</strong>
@@ -368,6 +377,8 @@
               </select>
             </div>
             <div class="field">
+
+              <small id="retention-class-note"></small>
               <label for="retention-days">Per quanto tempo Loglem conserva le copie?</label>
               <div class="row">
                 <input id="retention-days" type="number" min="1" max="36500" required />
@@ -569,8 +580,57 @@
         </div>
       </section>
 
+      <section id="view-rules" data-view="rules" hidden>
+        <div class="panel"><h2>Regole delle sorgenti</h2><div id="rules-table" class="table-scroll"></div></div>
+        <form id="assignment" class="panel policy-form"><h2>Assegna classe e sito</h2>
+          <label>Sorgente <select id="assign-source" required></select></label>
+          <label>Classe <select id="assign-class"></select></label><label>Sito <input id="assign-site" maxlength="200" placeholder="example.com" list="known-sites"></label><datalist id="known-sites"></datalist>
+          <button class="primary">Salva assegnazione</button></form>
+        <form id="class-form" class="panel policy-form"><h2>Classi di regole</h2>
+          <label>Classe da modificare <select id="class-picker"></select></label>
+          <label>Nome <input id="class-name" required maxlength="120"></label><label>Perché applichi questa regola? <input id="class-reason" required></label>
+          <label>Durata <input id="class-duration" type="number" min="1" value="28" required></label>
+          <label>Unità <select id="class-unit"><option value="days">Giorni</option><option value="months">Mesi</option><option value="years">Anni</option></select></label>
+          <label>Quota condivisa in MiB (0 = illimitata) <input id="class-quota" type="number" min="0" value="0" required></label>
+          <label class="checkbox"><input type="checkbox" id="class-mask"> Maschera subito gli IP</label>
+          <label class="checkbox"><input type="checkbox" id="class-proof"> Sigilla ogni giorno concluso</label>
+          <label>Autorità di marca temporale RFC 3161 <input id="class-tsa" type="url" placeholder="https://… (facoltativo)"></label>
+          <label class="checkbox"><input type="checkbox" id="class-compress"> Comprimi i messaggi dei giorni conclusi</label>
+          <label class="checkbox"><input type="checkbox" id="class-backup"> Includi nel backup delle classi selezionate</label>
+          <div class="row"><button class="primary">Salva classe</button><button id="delete-class" type="button">Elimina classe inutilizzata</button></div>
+        </form>
+        <form id="quota-form" class="panel policy-form"><h2>Spazio totale degli archivi</h2>
+          <label>Quota in MiB (0 = illimitata) <input id="total-quota" type="number" min="0" required></label>
+          <p>Al termine della raccolta Loglem libera le righe più vecchie. Gli archivi con sigilli sono protetti. SQLite può usare spazio aggiuntivo durante la scrittura.</p>
+          <button>Salva quota</button></form>
+      </section>
+      <section id="view-inventory" data-view="inventory" hidden><div class="panel"><h2>Log del server</h2>
+        <button id="scan-server">Esplora il server</button>
+        <label class="checkbox"><input type="checkbox" id="only-unlinked"> Mostra solo le sorgenti da collegare</label>
+        <p id="map-notes" class="muted"></p><div id="map-result" class="table-scroll"></div></div></section>
       <!-- Sistema -->
       <section id="view-system" data-view="system" hidden>
+        <form id="proof-form" class="panel policy-form"><h2>Sigilli e marche temporali</h2><label>Sorgente <select id="proof-source" required></select></label>
+          <label class="checkbox"><input type="checkbox" id="proof-on"> Sigilla i giorni conclusi</label>
+          <label>Autorità RFC 3161 (facoltativa) <input type="url" id="proof-tsa" placeholder="https://…"></label>
+          <div class="row"><button>Salva modalità prova</button><button type="button" id="verify-proof">Verifica catena e impronte</button></div><pre id="proof-report"></pre></form>
+        <form id="alert-form" class="panel policy-form"><h2>Regole di allarme</h2><div id="alert-list"></div>
+          <label>Nome della regola <input required id="alert-name" pattern="[A-Za-z0-9_\-]+"></label>
+          <label>Tipo <select id="alert-kind"><option value="pattern">Occorrenze di un testo</option><option value="archive_size">Dimensione degli archivi</option><option value="free_space">Spazio libero sul disco</option></select></label>
+          <label>Sorgente <select id="alert-source"></select></label>
+          <label id="alert-text-label">Testo <input id="alert-text" required></label>
+          <label><span id="alert-threshold">Numero di occorrenze</span><input id="alert-value" type="number" min="1" value="1" required></label>
+          <label id="alert-time-label">Finestra in minuti <input id="alert-minutes" type="number" min="1" value="10" required></label><button>Salva allarme</button></form>
+        <form id="local-backup" class="panel policy-form"><h2>Backup locale</h2><label>Cartella del backup sul server <input id="backup-path" required placeholder="/percorso/backup"></label>
+          <div class="row"><button value="create">Crea e verifica</button><button value="verify">Verifica esistente</button></div><output id="local-result"></output></form>
+        <form id="schedule-form" class="panel policy-form"><h2>Backup cifrato fuori dal server</h2>
+          <label>Cartella remota esistente <input id="backup-dest" required placeholder="utente@host:/backup/loglem"></label>
+          <label>Impronta completa della chiave pubblica OpenPGP <input id="backup-key" required></label>
+          <label>Intervallo in ore <input id="backup-hours" type="number" min="1" max="8760" value="24" required></label>
+          <label class="checkbox"><input type="checkbox" id="backup-selected"> Solo le classi selezionate</label>
+          <p>Il servizio usa GPG, tar e rsync via SSH. Importa la chiave pubblica nel portachiavi del servizio e configura l’accesso SSH al server di destinazione.</p>
+          <div class="row"><button>Attiva pianificazione</button><button type="button" id="stop-backup">Disattiva</button><button type="button" id="send-backup">Esegui ora</button><button type="button" id="backup-refresh">Aggiorna esito</button></div>
+          <output id="backup-status"></output></form>
         <div class="panel">
           <h2>Aggiornamenti</h2>
           <p class="muted">

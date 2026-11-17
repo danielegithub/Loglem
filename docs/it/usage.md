@@ -147,3 +147,31 @@ podman run -d --name loglem -p 127.0.0.1:8790:8790 \
 Apri `http://127.0.0.1:8790` e aggiungi `/logs/myapp` come sorgente cartella. I dati restano nel volume `loglem-data`. Podman, Docker e il journal dell'host non si raggiungono da dentro: per quelli usa Loglem sull'host, oppure monta i file di log in `/logs`. Per pulire i file originali, monta la cartella senza `:ro`.
 
 Dati personali, strumenti GDPR e modalità prova: [privacy.md](privacy.md).
+
+## Regole, siti e spazio
+
+In **Regole e siti**, scegli un modello o crea una classe. Scrivi il motivo e assegna le sorgenti. Salvare una modifica alla classe aggiorna tutte le sorgenti assegnate. Una sorgente può restare individuale. Il campo sito raggruppa anche sorgenti di tipi diversi. In **Esplora i log** i filtri per sito, data e testo valgono anche per le quattro domande preimpostate. Gli errori di cron sono quelli registrati nei messaggi del servizio.
+
+La quota in MiB riguarda i database SQLite delle sorgenti della classe. La quota totale comprende anche le sorgenti individuali. A fine raccolta Loglem elimina prima le righe più vecchie per data dell’evento. Gli archivi con la modalità prova attiva o con una catena di sigilli sono esclusi dalla cancellazione per spazio. Se da soli superano la quota, la raccolta segnala il problema. I file originali, i backup e i file temporanei richiedono spazio aggiuntivo. Nella tabella, lo storico attuale parte dalla prima riga ancora presente.
+
+La compressione si applica in lotti ai messaggi raccolti nei giorni UTC già conclusi. I messaggi restano ricercabili e i sigilli verificabili. Un archivio che contiene messaggi compressi richiede questa versione di Loglem o una successiva.
+
+In **Mappa del server**, avvia la scansione dei log leggibili in `/var/log` e `/srv`, dei file indicati nelle configurazioni web, dei container e dei servizi del journal. Per i log su file trovi la dimensione del file. **Misura messaggi** conta i byte leggibili dove il runtime usa un archivio condiviso. Per Traefik puoi anche scegliere il file di accesso direttamente; per cron la scelta guidata prepara i filtri del journal.
+
+## Backup cifrato via SSH
+
+In **Sistema** puoi creare e verificare un backup locale, configurare gli allarmi e verificare i sigilli di una sorgente. Per le marche temporali serve l’indirizzo HTTPS della tua autorità RFC 3161.
+
+Per il backup remoto prepara una coppia OpenPGP su un altro computer e custodisci lì la chiave privata. Sul server importa la sola chiave pubblica nel portachiavi GPG dell’utente che esegue Loglem. Lo stesso utente deve poter scrivere e leggere la cartella remota tramite SSH con autenticazione non interattiva e chiave host già verificata. Servono GPG, tar, rsync e il client SSH sul server e rsync a destinazione.
+
+In **Sistema → Backup cifrato fuori dal server** indica l’impronta completa della chiave, la destinazione `utente@host:/cartella` e l’intervallo in ore. Puoi includere tutte le sorgenti o soltanto quelle di classi contrassegnate per il backup. Lascia Loglem in esecuzione con `web` o `serve`. Il servizio verifica lo snapshot locale, lo cifra, lo trasferisce e confronta l’impronta del file remoto riletto. Ogni esecuzione riuscita crea un nuovo file. La conservazione delle copie remote si gestisce sul server di destinazione.
+
+Per recuperare i dati, porta il file cifrato sul computer con la chiave privata. Estrarlo in una cartella privata e verificare il manifesto prima del ripristino:
+
+```sh
+mkdir -m 700 recupero
+gpg --output recupero/snapshot.tar.gz --decrypt loglem-BACKUP.tar.gz.gpg
+tar -xzf recupero/snapshot.tar.gz -C recupero
+loglem backup-verify recupero
+loglem --data-dir /percorso/nuovo restore recupero
+```

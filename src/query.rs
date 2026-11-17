@@ -125,7 +125,10 @@ impl Query {
             }
         }
         if let Some(status) = self.status {
-            if !has(&format!("\"status\":{status}")) && !has(&format!("\" {status} ")) {
+            if !has(&format!("\"status\":{status}"))
+                && !has(&format!("\"DownstreamStatus\":{status}"))
+                && !has(&format!("\" {status} "))
+            {
                 return false;
             }
         }
@@ -178,9 +181,12 @@ impl Query {
         }
         if let Some(status) = self.status {
             // JSON di Caddy: "status":404 · formato combined: "GET / HTTP/1.1" 404
-            sql.push_str(" AND (instr(message, ?) > 0 OR instr(message, ?) > 0)");
+            sql.push_str(
+                " AND (instr(message, ?) > 0 OR instr(message, ?) > 0 OR instr(message, ?) > 0)",
+            );
             params.push(Value::Text(format!("\"status\":{status}")));
             params.push(Value::Text(format!("\" {status} ")));
+            params.push(Value::Text(format!("\"DownstreamStatus\":{status}")));
         }
         if let Some(level) = self.level {
             let mut marks = ERROR_MARKS.to_vec();

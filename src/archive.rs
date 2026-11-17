@@ -9,7 +9,7 @@ use rusqlite::{params, types::Value, Connection, OptionalExtension, Transaction}
 use std::{path::Path, time::Duration};
 
 const GAPS: &str = "gaps";
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 /// Versione 2: niente più copia identica di ogni riga (`raw`). Per ogni file già letto si
 /// calcola la catena di impronte dalle copie che ci sono ancora, poi la colonna sparisce.
@@ -111,7 +111,7 @@ impl Archive {
                 "BEGIN IMMEDIATE; {} COMMIT;",
                 include_str!("schema.sql")
             ))?;
-        } else if version < SCHEMA_VERSION {
+        } else if version == 1 {
             migrate_v1_to_v2(&db)?;
         }
         db.execute_batch(concat!(
@@ -124,14 +124,92 @@ impl Archive {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
         }
+        use rusqlite::functions::FunctionFlags;
+        db.create_scalar_function(
+            "loglem_decode",
+            1,
+            FunctionFlags::SQLITE_DETERMINISTIC,
+            |ctx| {
+                use std::io::Read;
+                let input = ctx.get_raw(0).as_blob()?;
+                let mut text = String::new();
+                flate2::read::GzDecoder::new(input)
+                    .take(crate::MAX_LINE_BYTES as u64 * 8 + 1)
+                    .read_to_string(&mut text)
+                    .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
+                if text.len() > crate::MAX_LINE_BYTES * 8 {
+                    return Err(rusqlite::Error::UserFunctionError(
+                        "Riga compressa oltre il limite".into(),
+                    ));
+                }
+                Ok(text)
+            },
+        )?;
+        db.execute_batch("CREATE TEMP VIEW log_rows AS SELECT id,record_key,file_id,generation,byte_offset,event_ns,collected_ns,timestamp_origin,CASE typeof(message) WHEN 'blob' THEN loglem_decode(message) ELSE message END AS message FROM main.entries")?;
         Ok(Self { db })
+    }
+
+    pub fn compress_closed(&self) -> Result<()> {
+        use std::io::Write;
+        let cutoff = chrono::Utc::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_nanos_opt()
+            .unwrap();
+        let last_time = self
+            .get_state("compression_time")?
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(i64::MIN);
+        let last_id = self
+            .get_state("compression_id")?
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0);
+        let tx = self.db.unchecked_transaction()?;
+        let mut stmt = tx.prepare(
+            "SELECT collected_ns,id,message FROM entries
+            WHERE (collected_ns,id)>(?1,?2) AND collected_ns<?3 AND typeof(message)='text'
+            ORDER BY collected_ns,id LIMIT 256",
+        )?;
+        let mut rows = stmt.query(params![last_time, last_id, cutoff])?;
+        let mut cursor = None;
+        let mut compressed = false;
+        while let Some(row) = rows.next()? {
+            let at: i64 = row.get(0)?;
+            let id: i64 = row.get(1)?;
+            let text: String = row.get(2)?;
+            let mut encoder =
+                flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+            encoder.write_all(text.as_bytes())?;
+            let bytes = encoder.finish()?;
+            if bytes.len() < text.len() {
+                tx.execute(
+                    "UPDATE entries SET message=? WHERE id=?",
+                    params![bytes, id],
+                )?;
+                compressed = true;
+            }
+            cursor = Some((at, id));
+        }
+        drop(rows);
+        drop(stmt);
+        if compressed {
+            tx.pragma_update(None, "user_version", 3)?;
+        }
+        if let Some((at, id)) = cursor {
+            self.set_state("compression_time", &at.to_string())?;
+            self.set_state("compression_id", &id.to_string())?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     /// Vero se l'archivio è nel formato precedente e va migrato (non lo modifica).
     pub fn needs_migration(path: &Path) -> bool {
         Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .and_then(|db| db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)))
-            .is_ok_and(|version| version > 0 && version < SCHEMA_VERSION)
+            .is_ok_and(|version| version == 1)
     }
 
     pub fn cursor(&self, file_id: &str) -> Result<Cursor> {
@@ -282,7 +360,7 @@ impl Archive {
     ) -> Result<Vec<SearchRow>> {
         let (filters, mut values) = query.sql();
         let mut stmt = self.db.prepare(&format!(
-            "SELECT event_ns, timestamp_origin, message FROM entries \
+            "SELECT event_ns, timestamp_origin, message FROM log_rows \
              WHERE event_ns >= ? AND event_ns < ?{filters} \
              ORDER BY event_ns DESC, id DESC LIMIT ?"
         ))?;
@@ -307,7 +385,7 @@ impl Archive {
     /// Quante righe dal momento `since` contengono `text` (per gli allarmi).
     pub fn count_since(&self, since: i64, text: &str) -> Result<i64> {
         Ok(self.db.query_row(
-            "SELECT count(*) FROM entries WHERE event_ns >= ?1 AND instr(message, ?2) > 0",
+            "SELECT count(*) FROM log_rows WHERE event_ns >= ?1 AND instr(message, ?2) > 0",
             params![since, text],
             |r| r.get(0),
         )?)
@@ -354,7 +432,7 @@ impl Archive {
         let after = if last < after { 0 } else { after };
         let (filters, mut values) = query.sql();
         let mut stmt = self.db.prepare(&format!(
-            "SELECT id, event_ns, timestamp_origin, message FROM entries \
+            "SELECT id, event_ns, timestamp_origin, message FROM log_rows \
              WHERE id > ?{filters} ORDER BY id LIMIT ?"
         ))?;
         values.insert(0, Value::Integer(after));

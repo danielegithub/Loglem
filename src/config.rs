@@ -45,6 +45,7 @@ pub fn validate(config: &Config) -> Result<()> {
     if config.version != 1 {
         bail!("Unsupported configuration version {}", config.version);
     }
+    config.rules.validate(&config.sources)?;
     config.access.validate()?;
     config.alerts.validate()?;
     if !(1..=3600).contains(&config.poll_seconds) {
@@ -110,8 +111,8 @@ pub fn validate(config: &Config) -> Result<()> {
                 path,
                 rotated_pattern,
             } => {
-                if !path.is_absolute() || path.extension().and_then(|x| x.to_str()) != Some("log") {
-                    bail!("Choose an absolute path to a .log file");
+                if !path.is_absolute() || !crate::sources::file::log_name(path) {
+                    bail!("Scegli il percorso assoluto di un file di log");
                 }
                 if let Some(pattern) = rotated_pattern {
                     if pattern.contains(['/', '\\']) || pattern == ".." {

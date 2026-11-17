@@ -57,6 +57,15 @@ pub fn candidates(path: &Path, pattern: Option<&str>) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
+pub fn log_name(path: &Path) -> bool {
+    let name = path.file_name().and_then(|v| v.to_str()).unwrap_or("");
+    name.ends_with(".log")
+        || name.contains(".log.")
+        || ["syslog", "messages", "cron", "secure", "maillog"]
+            .iter()
+            .any(|base| name == *base || name.starts_with(&format!("{base}.")))
+}
+
 /// Immediate children only; no symlinks, devices, or implicit recursive access.
 pub fn folder_files(path: &Path) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();

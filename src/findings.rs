@@ -43,7 +43,7 @@ impl Findings {
 pub fn scan(store: &Archive) -> Result<Findings> {
     let mut stmt = store
         .db
-        .prepare("SELECT message FROM entries ORDER BY id DESC LIMIT ?1")?;
+        .prepare("SELECT message FROM log_rows ORDER BY id DESC LIMIT ?1")?;
     let mut rows = stmt.query([SAMPLE as i64])?;
     let mut found = Findings::default();
     while let Some(row) = rows.next()? {
