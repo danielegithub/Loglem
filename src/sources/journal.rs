@@ -104,6 +104,34 @@ fn journalctl() -> Command {
     Command::new(std::env::var_os("LOGLEM_JOURNALCTL").unwrap_or_else(|| "journalctl".into()))
 }
 
+pub fn history(filter: &Filter) -> Result<String> {
+    filter.validate()?;
+    let mut cmd = journalctl();
+    cmd.args([
+        "-n",
+        "+1",
+        "--no-pager",
+        "--output=json",
+        "--output-fields=__REALTIME_TIMESTAMP",
+    ]);
+    filter.apply(&mut cmd);
+    let data = process::output(&mut cmd, Duration::from_secs(5))?;
+    if data.is_empty() {
+        return Ok("Nessuna voce leggibile per questa sorgente.".into());
+    }
+    let v: Value = serde_json::from_slice(&data)?;
+    let at = v["__REALTIME_TIMESTAMP"]
+        .as_str()
+        .context("Data non disponibile")?
+        .parse::<i64>()?
+        .saturating_mul(1000);
+    Ok(format!(
+        "Prima voce leggibile: {} ({} giorni fa).",
+        &crate::timestamps::format_ns(at)[..10],
+        (crate::timestamps::now_ns() - at).max(0) / 86_400_000_000_000
+    ))
+}
+
 /// Cursore dell'ultima voce letta: serve a riconoscere le lacune.
 const CURSOR: &str = "journal_cursor";
 /// Istante (microsecondi) dell'ultima voce letta: da qui riparte la lettura.

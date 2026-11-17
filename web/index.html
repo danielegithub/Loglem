@@ -293,13 +293,14 @@
         <form id="save-source" class="panel wizard-step" hidden>
           <h2>Ultimi dettagli</h2>
           <div id="chosen-source" class="chosen-source"></div>
+          <div id="source-original-retention"></div>
           <div class="field">
             <label for="source-name">Nome della sorgente</label>
             <input id="source-name" required maxlength="64" pattern="[A-Za-z0-9_\-]+" />
             <small>Serve per ritrovarla nell'elenco. Solo lettere, numeri, - e _ (niente spazi).</small>
           </div>
           <div class="field">
-            <label for="source-days">Per quanto tempo tenere le copie?</label>
+            <label for="source-days">Per quanto tempo Loglem conserva le copie?</label>
             <div class="row">
               <input id="source-days" type="number" min="1" max="36500" value="28" required />
               <select id="source-unit" class="unit-select" aria-label="Unità di conservazione">
@@ -309,7 +310,7 @@
               </select>
             </div>
             <small>
-              Passato questo tempo Loglem elimina le sue copie. I file originali restano dove sono.
+              Passato questo tempo Loglem elimina le righe scadute dal suo archivio.
             </small>
           </div>
           <div class="field">
@@ -351,6 +352,7 @@
           <a href="#sources" class="text-link">← Torna alle sorgenti</a>
           <h2 id="settings-title">Impostazioni sorgente</h2>
           <div id="settings-advice" class="advice" hidden></div>
+          <section class="source-lifecycle"><h3>Conservazione alla sorgente</h3><div id="settings-original-retention"></div></section>
           <form id="retention-form">
             <div class="field">
               <label for="settings-label">Nome visualizzato</label>
@@ -366,7 +368,7 @@
               </select>
             </div>
             <div class="field">
-              <label for="retention-days">Per quanto tempo tenere le copie?</label>
+              <label for="retention-days">Per quanto tempo Loglem conserva le copie?</label>
               <div class="row">
                 <input id="retention-days" type="number" min="1" max="36500" required />
                 <select id="retention-unit" class="unit-select" aria-label="Unità di conservazione">

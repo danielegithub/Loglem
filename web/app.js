@@ -86,16 +86,18 @@ async function api(path, data = {}) {
 
 // Disabilita il pulsante mentre l'azione è in corso e mostra eventuali errori.
 async function perform(button, action) {
-  const label = button.textContent;
+  const label = button.childElementCount === 0 ? button.textContent : null;
   button.disabled = true;
-  button.textContent = 'Attendi…';
+  if (label !== null) button.textContent = 'Attendi…';
+  button.setAttribute('aria-busy', 'true');
   try {
     await action();
   } catch (error) {
     showNotice(error.message, true);
   } finally {
     button.disabled = false;
-    button.textContent = label;
+    button.removeAttribute('aria-busy');
+    if (label !== null) button.textContent = label;
   }
 }
 
@@ -157,11 +159,41 @@ function renderEmptySources(list) {
     element(
       'p',
       'Una sorgente è una cartella con file .log oppure un container Podman. ' +
-        'Loglem ne salva una copia in cui puoi cercare. I tuoi file originali non vengono toccati.',
+        'Loglem ne salva una copia in cui puoi cercare. La durata delle copie si imposta per ogni sorgente.',
     ),
     link('＋ Aggiungi la prima sorgente', '#add', 'button primary admin-only'),
   );
   list.append(empty);
+}
+
+// Le sonde del runtime possono essere lente: condividi la richiesta tra scheda e impostazioni.
+const originalRetentionCache = new Map();
+
+function originalRetentionNote(input, source, cleanup = false) {
+  const note = element('p', 'Verifica della durata degli originali…', 'muted');
+  const key = JSON.stringify([source?.source, input, source?.remove_rotated, source?.completed_dir]);
+  let cached = originalRetentionCache.get(key);
+  if (!cached || Date.now() - cached.at > 60000) {
+    const request = source
+      ? api('original-retention', { name: source.source })
+      : api('preview-retention', input);
+    cached = { at: Date.now(), result: request.catch(() => 'Configurazione non disponibile.') };
+    originalRetentionCache.set(key, cached);
+  }
+  cached.result.then((policy) => {
+    const removesFiles = !source && cleanup;
+    note.textContent = 'Originali · ' + policy + (removesFiles
+      ? ' Loglem può eliminare i file conclusi configurati dopo la verifica e almeno 24 ore dall’ultima modifica.'
+      : '');
+  });
+  return note;
+}
+
+function sourceTypeLabel(s) {
+  if (s.input.kind === 'journal' && s.input.matches?.some(m=>m.startsWith('CONTAINER_NAME='))) {
+    return (s.journal_runtime?.toUpperCase() || 'CONTAINER') + ' · tramite journal';
+  }
+  return SOURCE_KINDS[s.input.kind] || (s.input.rotated_pattern?.endsWith('-*.log') ? 'FILE · rotazione Caddy' : 'FILE DI LOG');
 }
 
 function renderSourceCard(source) {
@@ -170,7 +202,7 @@ function renderSourceCard(source) {
   const heading = element('div', undefined, 'card-heading');
   const title = element('div');
   title.append(
-    element('span', SOURCE_KINDS[source.input.kind] || 'FILE DI LOG', 'source-kind'),
+    element('span', sourceTypeLabel(source), 'source-kind'),
     element('h3', source.label || source.source),
   );
   const [badgeText, badgeClass] = sourceBadge(source);
@@ -180,14 +212,14 @@ function renderSourceCard(source) {
   const metrics = element('div', undefined, 'card-metrics');
   const values = [
     [source.entries.toLocaleString('it-IT'), 'righe salvate'],
-    [periodText(sourcePeriod(source)), 'di conservazione'],
+    [periodText(sourcePeriod(source)), 'di conservazione in Loglem'],
   ];
   for (const [value, label] of values) {
     const metric = element('div');
     metric.append(element('strong', value), element('span', label));
     metrics.append(metric);
   }
-  card.append(metrics);
+  card.append(metrics, originalRetentionNote(source.input, source));
 
   const error = sourceError(source);
   if (source.recovery) card.append(element('p', source.recovery, 'card-info'));
@@ -225,7 +257,7 @@ function renderSourceCard(source) {
     element('p', 'Copia salvata in: ' + source.archive, 'path'),
     element(
       'p',
-      'Spazio: ' + formatSize(source.archive_bytes) + ' · Primo log: ' + formatDate(source.earliest),
+      'Spazio: ' + formatSize(source.archive_bytes) + ' · Primo log in Loglem: ' + formatDate(source.earliest),
       'path',
     ),
     element('p', source.message, 'muted'),
@@ -601,7 +633,8 @@ function containerChoice(c, connection) {
     $('follow-name-box').hidden = true;
     try {
       const logs = await api('container-logs', { runtime: addKind, connection, container: c.id });
-      $('follow-name-box').hidden = !logs.journald || container.id !== c.id;
+      if (container?.id !== c.id || container.connection !== connection) return;
+      $('follow-name-box').hidden = !logs.journald;
       $('follow-by-name').checked = true; // la scelta consigliata, a ogni nuovo container
     } catch (_) {
       // Facoltativo: senza questa informazione resta la lettura normale del container.
@@ -617,6 +650,7 @@ function containerChoice(c, connection) {
 
 async function loadContainers() {
   container = null;
+  $('follow-name-box').hidden = true;
   $('use-podman').disabled = true;
   const list = $('container-list');
   list.replaceChildren(element('p', 'Cerco i container…', 'muted'));
@@ -718,6 +752,11 @@ async function loadDiscovered() {
 function configureSource(source, description, suggestion) {
   selected = source;
   $('chosen-source').textContent = description;
+  // Il wizard passa i filtri sotto journal/kubernetes, l'API usa il formato delle sorgenti salvate.
+  const input = { ...source, ...source.journal, ...source.kubernetes };
+  if (source.kind === 'caddy') input.kind = 'file';
+  if (source.kind === 'docker') input.context = source.connection;
+  $('source-original-retention').replaceChildren(originalRetentionNote(input, null, source.kind === 'caddy'));
   const base = suggestion.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 48) || 'logs';
   let name = base;
   let n = 2;
@@ -1427,7 +1466,7 @@ $('use-podman').addEventListener('click', () => {
   if (!container) return;
   if (!$('follow-name-box').hidden && $('follow-by-name').checked) {
     const journal = { units: [], identifiers: [], matches: ['CONTAINER_NAME=' + container.name], priority: null };
-    configureSource({ kind: 'journal', journal }, 'Container ' + container.name + ' (per nome, dal journal)', container.name);
+    configureSource({ kind: 'journal', journal, journal_runtime:addKind }, 'Container ' + container.name + ' (per nome, dal journal)', container.name);
     return;
   }
   const runtime = addKind === 'docker' ? 'Docker' : 'Podman';
@@ -1526,6 +1565,7 @@ function updateStorage(prefix) {
 function populateSettings() {
   const s = settingsSource;
   const period = sourcePeriod(s);
+  $('settings-original-retention').replaceChildren(originalRetentionNote(s.input, s));
   const isPodman = s.input.kind === 'podman';
   const hasFiles = s.input.kind === 'file' || s.input.kind === 'folder';
   const isRotatedFile = s.input.kind === 'file' && Boolean(s.input.rotated_pattern);

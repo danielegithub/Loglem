@@ -497,6 +497,7 @@ fn audited(route: &str, body: &Value) -> Option<(&'static str, String)> {
 /// Azioni concesse anche a chi può solo consultare.
 const READER_ROUTES: &[&str] = &[
     "/api/status",
+    "/api/original-retention",
     "/api/search",
     "/api/tail",
     "/api/stats",
@@ -711,6 +712,7 @@ fn text<'a>(body: &'a Value, key: &str) -> Result<&'a str> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NewSource {
+    journal_runtime: Option<sources::podman::Runtime>,
     kind: String,
     name: String,
     path: Option<PathBuf>,
@@ -743,6 +745,26 @@ fn api(route: &str, app: &App, body: Value) -> Result<Value> {
                 "collection": app.worker.progress(),
                 "problems": problems,
             }))
+        }
+        "/api/original-retention" => {
+            let source = config::source(dir, text(&body, "name")?)?;
+            Ok(json!(sources::retention::originals(
+                &source.input,
+                source.remove_rotated,
+                source.completed_dir.is_some()
+            )))
+        }
+        // Solo l'amministratore può interrogare una sorgente ancora da aggiungere.
+        "/api/preview-retention" => {
+            let input: crate::model::Input = serde_json::from_value(body)?;
+            if let crate::model::Input::Docker { container, .. }
+            | crate::model::Input::Podman { container, .. } = &input
+            {
+                if container.len() != 64 || !container.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    bail!("Identificativo del container non valido");
+                }
+            }
+            Ok(json!(sources::retention::describe(&input)))
         }
         "/api/folders" => {
             let requested = body.get("path").and_then(Value::as_str).unwrap_or("");
@@ -1086,6 +1108,7 @@ fn tail(app: &App, body: &Value) -> Result<Value> {
 fn add_journal(app: &App, request: NewSource) -> Result<Value> {
     let source = crate::model::Source {
         id: request.name,
+        journal_runtime: request.journal_runtime,
         input: crate::model::Input::Journal(request.journal.unwrap_or_default()),
         retention: request.retention,
         retention_days: request.days.unwrap_or(28),

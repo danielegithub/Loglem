@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Source {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub journal_runtime: Option<crate::sources::podman::Runtime>,
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -117,6 +119,7 @@ impl Default for Source {
     fn default() -> Self {
         Self {
             id: String::new(),
+            journal_runtime: None,
             label: None,
             retention: None,
             log_kind: LogKind::Generic,
@@ -255,6 +258,7 @@ pub struct SearchRow {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SourceStatus {
+    pub journal_runtime: Option<crate::sources::podman::Runtime>,
     pub input: Input,
     pub archive_dir: Option<PathBuf>,
     pub label: String,

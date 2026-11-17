@@ -515,13 +515,14 @@ fn source_summary(s: &SourceStatus) -> String {
         .map(human_bytes)
         .unwrap_or_else(|| "non disponibile".into());
     format!(
-        "{name} — {state}\n  Legge da: {origin}\n  Spazio dei file originali: {original_size}\n  Salva le copie in: {archive}\n  Spazio delle copie: {archive_size}\n  Righe salvate: {entries} | Conservazione: {days}\n  Primo log disponibile: {earliest}\n  Ultima lettura riuscita: {last}\n  Dettaglio: {message}\n",
+        "{name} — {state}\n  Legge da: {origin}\n  Spazio dei file originali: {original_size}\n  Salva le copie in: {archive}\n  Spazio delle copie: {archive_size}\n  Righe salvate: {entries} | Conservazione in Loglem: {days}\n  Originali: {original_policy}\n  Primo log in Loglem: {earliest}\n  Ultima lettura riuscita: {last}\n  Dettaglio: {message}\n",
         name = util::safe_text(&s.label),
         origin = util::safe_text(&s.origin),
         archive = util::safe_text(&s.archive),
         archive_size = human_bytes(s.archive_bytes),
         entries = s.entries,
         days = s.retention,
+        original_policy = util::safe_text(&crate::sources::retention::originals(&s.input,s.remove_rotated,s.completed_dir.is_some())),
         earliest = s.earliest.as_deref().unwrap_or("nessun log salvato"),
         last = s.last_collection.as_deref().unwrap_or("non ancora eseguita"),
         message = util::safe_text(&s.message),

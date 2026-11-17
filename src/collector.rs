@@ -373,6 +373,7 @@ pub fn statuses(dir: &Path) -> Result<Vec<SourceStatus>> {
                 ("waiting".into(), None, None, Vec::new(), None)
             };
             Ok(SourceStatus {
+                journal_runtime: source.journal_runtime,
                 input: source.input.clone(),
                 archive_dir: source.archive_dir.clone(),
                 label: source.label.clone().unwrap_or_else(|| source.id.clone()),

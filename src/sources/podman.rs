@@ -272,7 +272,7 @@ pub fn log_config(
     let data = process::output(
         runtime
             .command(connection)
-            .args(["inspect", "--format", "json", container]),
+            .args(["inspect", "--", container]),
         Duration::from_secs(20),
     )?;
     let value: serde_json::Value = serde_json::from_slice(&data)?;
@@ -288,7 +288,44 @@ pub fn log_config(
     // computer e un container locale (non una connessione remota, né la macchina virtuale
     // di Podman su macOS).
     let uses_journal = driver == "journald";
-    let journald = uses_journal && connection.is_none() && crate::sources::journal::available();
+    let journald = uses_journal
+        && connection.is_none()
+        && crate::sources::journal::available()
+        && match runtime {
+            // Anche un contesto predefinito può puntare a un host remoto.
+            Runtime::Podman => {
+                cfg!(target_os = "linux")
+                    && process::output(
+                        Command::new("podman").args([
+                            "--remote=false",
+                            "container",
+                            "exists",
+                            "--",
+                            container,
+                        ]),
+                        Duration::from_secs(3),
+                    )
+                    .is_ok()
+            }
+            Runtime::Docker => {
+                // Verifica l'origine nel journal locale prima di proporre di seguirla per nome.
+                let field = format!("CONTAINER_ID_FULL={container}");
+                process::output(
+                    Command::new("journalctl").args([
+                        "-n",
+                        "1",
+                        "--output=json",
+                        "--no-pager",
+                        &field,
+                    ]),
+                    Duration::from_secs(3),
+                )
+                .is_ok_and(|data| {
+                    serde_json::from_slice::<serde_json::Value>(&data)
+                        .is_ok_and(|v| v["CONTAINER_ID_FULL"] == container)
+                })
+            }
+        };
     let advice = match (driver.as_str(), &max_size) {
         ("journald", _) if !journald => {
             "I log del container vanno nel journal, che da qui non si può leggere direttamente: \
@@ -304,15 +341,14 @@ pub fn log_config(
             righe quando viene ricreato."
                 .to_owned()
         }
+        ("none", _) => "Il driver dei log è disattivato per questo container.".into(),
         (_, Some(size)) => format!(
-            "{} tiene al massimo {size} di log per questo container: oltre, le righe più \
+            "{} indica un limite di dimensione di {size} per la rotazione: le righe più \
              vecchie spariscono. Se Loglem resta fermo a lungo, quelle non lette si perdono.",
             runtime.name()
         ),
         (_, None) => format!(
-            "{} tiene tutti i log del container finché il container esiste: ogni riga vive due \
-             volte, lì e in Loglem. Per limitarli ricrea il container con \
-             --log-opt max-size=10mb (in compose: logging: options: max-size: 10mb).",
+            "{} non indica un limite di dimensione per questo container.",
             runtime.name()
         ),
     };
