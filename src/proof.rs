@@ -162,7 +162,7 @@ pub fn chain_path(dir: &Path, source: &str) -> PathBuf {
     dir.join("proof").join(format!("{source}.chain"))
 }
 
-fn tsa_path(dir: &Path, source: &str) -> PathBuf {
+pub fn tsa_path(dir: &Path, source: &str) -> PathBuf {
     dir.join("proof").join(format!("{source}.tsa"))
 }
 

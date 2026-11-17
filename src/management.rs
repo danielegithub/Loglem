@@ -37,6 +37,34 @@ pub struct Change {
     pub connection: Option<String>,
 }
 
+/// Elimina una sorgente con il suo storico. Solo se è in pausa o scollegata: una sorgente
+/// che sta ancora raccogliendo va prima fermata, altrimenti si perderebbero righe nuove.
+pub fn remove(dir: &Path, name: &str) -> Result<()> {
+    let _access = util::DataAccess::write(dir)?;
+    let _collector = util::Lock::acquire(&dir.join("collector.lock"))?;
+    let source = config::source(dir, name)?;
+    if source.enabled && !source.detached {
+        bail!("Metti prima in pausa o scollega la sorgente, poi potrai eliminarla");
+    }
+    let archive = source.archive_path(dir);
+    let mut files = vec![
+        archive.clone(),
+        archive.with_extension("db-wal"),
+        archive.with_extension("db-shm"),
+        archive.with_extension("db-journal"),
+        crate::proof::chain_path(dir, name),
+        crate::proof::tsa_path(dir, name),
+    ];
+    files.retain(|f| f.exists());
+    for file in files {
+        fs::remove_file(&file).with_context(|| format!("Non riesco a eliminare {}", file.display()))?;
+    }
+    config::edit(dir, |config| {
+        config.sources.retain(|s| s.id != name);
+        Ok(())
+    })
+}
+
 pub fn apply(dir: &Path, change: Change) -> Result<Source> {
     let old = config::source(dir, &change.name)?;
     let exclusive = change.container.is_some()

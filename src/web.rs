@@ -451,6 +451,13 @@ fn audited(route: &str, body: &Value) -> Option<(&'static str, String)> {
                 body.get("kind").and_then(Value::as_str).unwrap_or("?")
             ),
         )),
+        "/api/source-remove" => Some((
+            "elimina sorgente",
+            format!(
+                "sorgente: {}",
+                body.get("name").and_then(Value::as_str).unwrap_or("?")
+            ),
+        )),
         "/api/source-settings" | "/api/retention" => Some((
             "modifica impostazioni",
             format!(
@@ -870,6 +877,12 @@ fn api(route: &str, app: &App, body: Value) -> Result<Value> {
             Ok(
                 json!({"source":source,"message":"Impostazioni salvate; archivio e storico disponibili."}),
             )
+        }
+        "/api/source-remove" => {
+            let name = text(&body, "name")?.to_owned();
+            crate::management::remove(dir, &name)?;
+            app.worker.request();
+            Ok(json!({"message":"Sorgente e storico eliminati."}))
         }
         "/api/retention" => {
             let name = text(&body, "name")?.to_owned();

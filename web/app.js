@@ -1322,6 +1322,7 @@ function populateSettings() {
   const paused = !s.enabled || s.detached;
   $('pause-source').textContent = paused ? 'Riprendi la raccolta' : 'Metti in pausa';
   $('detach-source').disabled = s.detached;
+  $('remove-source').disabled = !paused;
   $('replacement-container').replaceChildren(new Option('Carica prima l’elenco', ''));
   $('reconnect-connection').value = '';
 }
@@ -1422,6 +1423,20 @@ $('detach-source').addEventListener('click', () =>
       'secondo la durata scelta.';
     if (!confirm(question)) return;
     await api('source-settings', { name: settingsSource.source, detached: true });
+    await refresh();
+    location.hash = '#sources';
+  }),
+);
+
+$('remove-source').addEventListener('click', () =>
+  perform($('remove-source'), async () => {
+    const name = settingsSource.source;
+    const question =
+      'Eliminare la sorgente «' + name + '» e tutto il suo storico? ' +
+      'Le righe archiviate saranno cancellate e non si possono recuperare. ' +
+      'I file originali non vengono toccati.';
+    if (!confirm(question)) return;
+    await api('source-remove', { name });
     await refresh();
     location.hash = '#sources';
   }),

@@ -239,6 +239,10 @@ pub enum SourceAction {
     Detach {
         name: String,
     },
+    /// Elimina una sorgente in pausa o scollegata, con tutto il suo storico.
+    Remove {
+        name: String,
+    },
     AddFolder {
         #[arg(long)]
         name: String,
@@ -617,6 +621,11 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
                             ..Default::default()
                         },
                     )?;
+                }
+                SourceAction::Remove { name } => {
+                    crate::management::remove(dir, &name)?;
+                    crate::audit::record(dir, "console", "elimina sorgente", &format!("sorgente: {name}"));
+                    println!("Sorgente {name} eliminata, con il suo storico.");
                 }
                 SourceAction::AddFolder { name, path, days } => {
                     let path = fs::canonicalize(path).context("Choose an existing folder")?;
