@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="loglem-token" content="__LOGLEM_TOKEN__" />
     <title>Loglem · Sorgenti</title>
-    <link rel="stylesheet" href="/style.css" />
-    <script src="/app.js" defer></script>
+    <link rel="stylesheet" href="style.css" />
+    <script src="app.js" defer></script>
   </head>
   <body>
     <aside class="sidebar">
@@ -20,6 +20,8 @@
         <a href="#logs" data-nav="logs"><span aria-hidden="true">≡</span> Esplora i log</a>
         <a href="#add" data-nav="add" class="admin-only"><span aria-hidden="true">＋</span> Aggiungi sorgente</a>
         <a href="#diagnostics" data-nav="diagnostics"><span aria-hidden="true">⌁</span> Problemi</a>
+        <a href="#privacy" data-nav="privacy" class="admin-only"><span aria-hidden="true">⚖</span> Dati personali</a>
+        <a href="#system" data-nav="system" class="admin-only"><span aria-hidden="true">⚙</span> Sistema</a>
       </nav>
       <div class="sidebar-bottom">
         <span class="connection-dot"></span> <span id="connection-status">Connessione…</span>
@@ -42,6 +44,7 @@
         <a class="button primary admin-only" id="header-add" href="#add">＋ Aggiungi sorgente</a>
       </header>
 
+      <div id="problems" class="problems" role="alert" hidden></div>
       <div id="notice" role="status" aria-live="polite" hidden></div>
 
       <!-- Sorgenti -->
@@ -86,6 +89,35 @@
               <input id="search-to" type="date" />
             </div>
             <span class="hint">Le date sono in UTC</span>
+            <details class="advanced-filters">
+              <summary>Filtri avanzati</summary>
+              <div class="filter-dates">
+                <label class="checkbox">
+                  <input type="checkbox" id="search-ignore-case" checked /> Maiuscole indifferenti
+                </label>
+                <div class="field">
+                  <label for="search-level">Gravità</label>
+                  <select id="search-level">
+                    <option value="">Tutte</option>
+                    <option value="error">Solo errori</option>
+                    <option value="warning">Avvisi ed errori</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="search-ip">Indirizzo IP</label>
+                  <input id="search-ip" placeholder="es. 203.0.113.7" />
+                </div>
+                <div class="field">
+                  <label for="search-path">Percorso</label>
+                  <input id="search-path" placeholder="es. /login" />
+                </div>
+                <div class="field">
+                  <label for="search-status">Codice</label>
+                  <input id="search-status" type="number" min="100" max="599" placeholder="es. 404" />
+                </div>
+              </div>
+              <small>Gravità e codice si riconoscono dal testo della riga (JSON di Caddy, Nginx, Apache, journal).</small>
+            </details>
             <label class="checkbox">
               <input type="checkbox" id="live" checked /> Diretta: le righe nuove compaiono in cima
               appena arrivano
@@ -111,6 +143,11 @@
         </ol>
 
         <div id="add-type" class="panel wizard-step">
+          <div id="discovered" class="discovered" hidden>
+            <h2>Trovati su questo server</h2>
+            <p class="muted">Letti dalle configurazioni di Caddy, Nginx e Apache.</p>
+            <div id="discovered-list"></div>
+          </div>
           <h2>Da dove vuoi leggere i log?</h2>
           <p class="muted">Scegli il tipo di sorgente: poi ti guido passo per passo.</p>
           <div class="type-grid">
@@ -124,6 +161,18 @@
               <span class="type-icon">⬡</span>
               <strong>Un container Podman</strong>
               <span>I messaggi che un tuo container scrive mentre lavora</span>
+              <span class="type-link" aria-hidden="true">›</span>
+            </button>
+            <button id="choose-docker" class="type-card">
+              <span class="type-icon">◳</span>
+              <strong>Un container Docker</strong>
+              <span>Come Podman, per chi usa Docker</span>
+              <span class="type-link" aria-hidden="true">›</span>
+            </button>
+            <button id="choose-kubernetes" class="type-card">
+              <span class="type-icon">☸</span>
+              <strong>Kubernetes</strong>
+              <span>Un pod, oppure tutti i pod di un'applicazione anche dopo i rilasci</span>
               <span class="type-link" aria-hidden="true">›</span>
             </button>
             <button id="choose-caddy" class="type-card">
@@ -169,7 +218,7 @@
         </div>
 
         <div id="podman-step" class="panel wizard-step" hidden>
-          <h2>Quale container vuoi seguire?</h2>
+          <h2 id="podman-step-title">Quale container vuoi seguire?</h2>
           <p class="muted">Ecco i container che l'utente che ha avviato Loglem può vedere.</p>
           <details class="connection-settings">
             <summary>Uso un Podman su un altro computer (facoltativo)</summary>
@@ -180,9 +229,29 @@
             </div>
           </details>
           <div id="container-list" class="container-list" aria-live="polite"></div>
+          <label class="checkbox" id="follow-name-box" hidden>
+            <input type="checkbox" id="follow-by-name" checked />
+            Segui per nome tramite il journal (consigliato): i log continuano anche quando il
+            container viene ricreato da un nuovo rilascio
+          </label>
           <div class="wizard-actions">
             <button data-back-type>← Indietro</button>
             <button id="use-podman" class="primary" disabled>Continua con questo container →</button>
+          </div>
+        </div>
+
+        <div id="kubernetes-step" class="panel wizard-step" hidden>
+          <h2>Quale applicazione vuoi seguire?</h2>
+          <p class="muted">I pod del cluster a cui è collegato kubectl.</p>
+          <div id="kubernetes-pods" class="container-list" aria-live="polite"></div>
+          <label class="checkbox">
+            <input type="checkbox" id="kubernetes-follow-app" checked />
+            Segui tutti i pod dell'applicazione (etichetta <code>app</code>): i log continuano
+            anche quando i pod vengono ricreati da un rilascio
+          </label>
+          <div class="wizard-actions">
+            <button data-back-type>← Indietro</button>
+            <button id="use-kubernetes" class="primary" disabled>Continua →</button>
           </div>
         </div>
 
@@ -375,6 +444,11 @@
             </div>
           </form>
 
+          <div id="container-log-box" class="source-lifecycle" hidden>
+            <h3>Log tenuti dal runtime</h3>
+            <p id="container-log-advice" class="muted"></p>
+          </div>
+
           <div class="source-lifecycle">
             <h3>Gestisci collegamento</h3>
             <p class="muted">
@@ -402,6 +476,108 @@
             </select>
             <button id="reconnect-source" type="button">Collega questo container</button>
           </details>
+        </div>
+      </section>
+
+      <!-- Statistiche -->
+      <section id="view-stats" data-view="stats" hidden>
+        <div class="panel">
+          <div class="section-heading">
+            <h2 id="stats-title">Statistiche</h2>
+            <select id="stats-days" aria-label="Periodo">
+              <option value="1">Ultimo giorno</option>
+              <option value="7" selected>Ultimi 7 giorni</option>
+              <option value="30">Ultimi 30 giorni</option>
+            </select>
+          </div>
+          <p id="stats-summary" class="muted"></p>
+          <div id="stats-body" class="stats-grid"></div>
+        </div>
+      </section>
+
+      <!-- Dati personali -->
+      <section id="view-privacy" data-view="privacy" hidden>
+        <div class="panel">
+          <h2>Trova i dati di una persona</h2>
+          <p class="muted">
+            Per una richiesta di cancellazione o di accesso ai dati. Scrivi almeno un campo.
+          </p>
+          <form id="privacy-form">
+            <div class="filter-dates">
+              <div class="field">
+                <label for="privacy-ip">Indirizzo IP</label>
+                <input id="privacy-ip" placeholder="es. 203.0.113.7" />
+              </div>
+              <div class="field">
+                <label for="privacy-text">Altro testo (nome, email…)</label>
+                <input id="privacy-text" />
+              </div>
+              <div class="field">
+                <label for="privacy-source">Sorgente</label>
+                <select id="privacy-source">
+                  <option value="">Tutte</option>
+                </select>
+              </div>
+            </div>
+            <label class="checkbox">
+              <input type="checkbox" id="privacy-originals" />
+              Considera anche i file originali dei programmi (solo file finiti e già archiviati)
+            </label>
+            <div class="row">
+              <button class="primary" type="submit">Mostra cosa trovo</button>
+              <button type="button" id="privacy-export">Scarica i dati (file di testo)</button>
+            </div>
+          </form>
+          <div id="privacy-result" hidden></div>
+        </div>
+        <div class="panel system-panel" id="privacy-erase" hidden>
+          <h2>Cancella</h2>
+          <p class="muted">
+            Le righe spariscono da Loglem (e dai file originali, se hai spuntato la casella).
+            Restano i log di Podman, Docker, Kubernetes e del journal, e i backup già fatti.
+          </p>
+          <div class="field">
+            <label for="privacy-reason">Motivo (obbligatorio)</label>
+            <input id="privacy-reason" placeholder="es. richiesta art. 17 del 17/11/2026, pratica 3" />
+            <small>Scrivi un numero di pratica, non un'email: anche l'email è un dato personale.</small>
+          </div>
+          <button type="button" id="privacy-erase-button" class="danger">Cancella</button>
+        </div>
+        <div class="panel system-panel">
+          <div class="section-heading">
+            <h2>Chi ha guardato</h2>
+            <button id="audit-reload" type="button">↻ Aggiorna</button>
+          </div>
+          <p class="muted">Accessi, ricerche, esportazioni e cancellazioni degli ultimi 90 giorni.</p>
+          <div id="audit-list"></div>
+        </div>
+      </section>
+
+      <!-- Sistema -->
+      <section id="view-system" data-view="system" hidden>
+        <div class="panel">
+          <h2>Aggiornamenti</h2>
+          <p class="muted">
+            Loglem scarica solo versioni firmate dall'editore configurato, le verifica e si
+            riavvia da solo. Puoi chiudere la pagina: l'aggiornamento continua.
+          </p>
+          <p id="update-status" class="path"></p>
+          <div class="row">
+            <button id="update-check" type="button">Controlla</button>
+            <button id="update-install" type="button" class="primary" hidden>Installa la nuova versione</button>
+          </div>
+        </div>
+        <div class="panel system-panel">
+          <h2>Impostazioni</h2>
+          <p class="muted">
+            Sorgenti, durate e regole in un file, per spostarle su un altro server. Utenti e
+            password non vengono esportati e non vengono sostituiti dall'importazione.
+          </p>
+          <div class="row">
+            <button id="config-export" type="button">Scarica le impostazioni</button>
+            <label class="button" for="config-file">Importa da file…</label>
+            <input id="config-file" type="file" accept="application/json,.json" hidden />
+          </div>
         </div>
       </section>
 

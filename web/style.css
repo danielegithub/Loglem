@@ -1010,3 +1010,123 @@ dialog::backdrop {
   gap: 10px;
   font-weight: 700;
 }
+
+.problems {
+  margin-bottom: 20px;
+  padding: 14px 18px;
+  border-radius: 10px;
+  background: #fff8e6;
+  border: 1px solid #f0d58c;
+  color: #7a5200;
+}
+
+.problems ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.card-info {
+  font-size: 12px;
+  color: #0b5c4c;
+  background: #eaf6f2;
+  padding: 12px;
+  border-radius: 7px;
+}
+
+.advanced-filters {
+  margin-top: 8px;
+}
+
+.advanced-filters summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.link-button {
+  padding: 0 4px;
+  border: none;
+  background: none;
+  color: inherit;
+  text-decoration: underline;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.stats-box table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.stats-box td {
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+.stats-box td:last-child {
+  text-align: right;
+  white-space: nowrap;
+  padding-left: 12px;
+}
+
+.stats-bar {
+  display: block;
+  height: 4px;
+  margin-top: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.5;
+}
+
+.system-panel {
+  margin-top: 20px;
+}
+
+.discovered {
+  margin-bottom: 24px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.discovered-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.discovered-row small {
+  display: block;
+}
+
+button.danger {
+  background: #b42318;
+  border-color: #b42318;
+  color: #fff;
+}
+
+.audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.audit-table td {
+  padding: 6px 8px 6px 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+#privacy-result {
+  margin-top: 18px;
+}

@@ -10,9 +10,12 @@ const PAGES = {
   add: ['Aggiungi una sorgente', 'Tre passaggi per iniziare a salvare i log.'],
   settings: ['Impostazioni sorgente', 'Nome, durata, posizione dei dati e collegamento.'],
   diagnostics: ['Problemi', 'Se qualcosa non funziona, qui trovi cosa è successo.'],
+  privacy: ['Dati personali', 'Cancella o scarica i dati di una persona, e guarda chi ha consultato i log.'],
+  system: ['Sistema', 'Aggiornamenti e impostazioni da spostare su un altro server.'],
+  stats: ['Statistiche', 'Richieste, pagine, codici di risposta e indirizzi di un log di accesso.'],
 };
 
-const SOURCE_KINDS = { podman: 'PODMAN', journal: 'JOURNAL' };
+const SOURCE_KINDS = { podman: 'PODMAN', docker: 'DOCKER', kubernetes: 'KUBERNETES', journal: 'JOURNAL' };
 
 let state = { sources: [], collection: {} };
 let view = 'sources';
@@ -55,7 +58,7 @@ function hideNotice() {
 async function api(path, data = {}) {
   let response;
   try {
-    response = await fetch('/api/' + path, {
+    response = await fetch('api/' + path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Loglem-Token': token },
       body: JSON.stringify(data),
@@ -187,7 +190,12 @@ function renderSourceCard(source) {
   card.append(metrics);
 
   const error = sourceError(source);
+  if (source.recovery) card.append(element('p', source.recovery, 'card-info'));
   if (source.warning) card.append(element('p', source.warning, 'card-warning'));
+  for (const gap of source.gaps.slice(0, 3)) {
+    const text = 'Possibile lacuna dal ' + formatDate(gap.from) + ' al ' + formatDate(gap.to) + ': ' + gap.reason;
+    card.append(element('p', text, 'card-warning'));
+  }
   if (error) {
     card.append(element('p', error, 'card-error'));
   } else if (source.entries === 0) {
@@ -205,6 +213,7 @@ function renderSourceCard(source) {
   actions.append(
     link('Vedi i log →', '#logs/' + encodeURIComponent(source.source), 'button primary'),
     link('Impostazioni', '#settings/' + encodeURIComponent(source.source), 'button admin-only'),
+    link('Statistiche', '#stats/' + encodeURIComponent(source.source)),
   );
   card.append(actions);
 
@@ -259,6 +268,30 @@ function sourceOptionLabel(source) {
   return (source.label || source.source) + (source.detached ? ' (storico)' : '');
 }
 
+// Riquadro in cima alla pagina: sorgenti ferme, in errore o con lacune recenti.
+function renderProblems(problems) {
+  const box = $('problems');
+  box.hidden = problems.length === 0;
+  box.replaceChildren();
+  if (problems.length === 0) return;
+  box.append(element('strong', problems.length === 1 ? 'Attenzione' : problems.length + ' cose da controllare'));
+  const list = element('ul');
+  for (const problem of problems.slice(0, 5)) {
+    const item = element('li', problem.text + ' ');
+    const seen = element('button', 'Segna come visto', 'link-button');
+    seen.type = 'button';
+    seen.addEventListener('click', () =>
+      perform(seen, async () => {
+        await api('alert-seen', { id: problem.id });
+        await refresh();
+      }),
+    );
+    item.append(seen);
+    list.append(item);
+  }
+  box.append(list);
+}
+
 function syncSourceSelect() {
   const select = $('search-source');
   const previous = select.value;
@@ -293,6 +326,7 @@ async function refresh() {
     $('connection-status').textContent = 'Collegato';
     $('footer-status').textContent = 'in funzione';
     syncSourceSelect();
+    renderProblems(state.problems || []);
     renderSources();
     if (view === 'logs') {
       renderLogStatus();
@@ -364,8 +398,7 @@ async function search(showErrors = true) {
   const query = $('search-text').value;
   try {
     const { rows } = await api('search', {
-      source: $('search-source').value,
-      text: query,
+      ...currentQuery(),
       from: $('search-from').value,
       to: $('search-to').value,
     });
@@ -412,7 +445,7 @@ function stopLive() {
 async function startLive() {
   const run = ++liveRun;
   if (!liveWanted()) return;
-  const filters = { source: $('search-source').value, text: $('search-text').value };
+  const filters = currentQuery();
   let after = null;
   while (run === liveRun && liveWanted()) {
     try {
@@ -435,7 +468,22 @@ function addLiveRows(rows, query) {
   $('result-count').textContent = list.children.length + ' righe · in diretta';
 }
 
+// Testo e filtri della ricerca, come li vuole il server (vale anche per la diretta).
+function currentQuery() {
+  const status = $('search-status').value;
+  return {
+    source: $('search-source').value,
+    text: $('search-text').value,
+    ignore_case: $('search-ignore-case').checked,
+    level: $('search-level').value || null,
+    ip: $('search-ip').value.trim() || null,
+    path: $('search-path').value.trim() || null,
+    status: status ? Number(status) : null,
+  };
+}
+
 function clearSearch() {
+  for (const id of ['search-ip', 'search-path', 'search-status', 'search-level']) $(id).value = '';
   $('search-text').value = '';
   $('search-from').value = '';
   $('search-to').value = '';
@@ -450,7 +498,8 @@ function showWizardStep(step) {
   }
   $('add-type').hidden = step !== 1;
   $('folder-step').hidden = !(step === 2 && (addKind === 'folder' || addKind === 'caddy'));
-  $('podman-step').hidden = !(step === 2 && addKind === 'podman');
+  $('podman-step').hidden = !(step === 2 && (addKind === 'podman' || addKind === 'docker'));
+  $('kubernetes-step').hidden = !(step === 2 && addKind === 'kubernetes');
   $('journal-step').hidden = !(step === 2 && addKind === 'journal');
   $('save-source').hidden = step !== 3;
 }
@@ -522,9 +571,17 @@ function containerChoice(c, connection) {
   radio.type = 'radio';
   radio.name = 'container';
   radio.value = c.id;
-  radio.addEventListener('change', () => {
+  radio.addEventListener('change', async () => {
     container = { ...c, connection };
     $('use-podman').disabled = false;
+    $('follow-name-box').hidden = true;
+    try {
+      const logs = await api('container-logs', { runtime: addKind, connection, container: c.id });
+      $('follow-name-box').hidden = !logs.journald || container.id !== c.id;
+      $('follow-by-name').checked = true; // la scelta consigliata, a ogni nuovo container
+    } catch (_) {
+      // Facoltativo: senza questa informazione resta la lettura normale del container.
+    }
   });
   const text = element('div');
   const details =
@@ -541,7 +598,7 @@ async function loadContainers() {
   list.replaceChildren(element('p', 'Cerco i container…', 'muted'));
   try {
     const connection = $('connection').value.trim() || null;
-    const data = await api('podman', { connection });
+    const data = await api('podman', { connection, runtime: addKind });
     list.replaceChildren();
     if (data.containers.length === 0) {
       list.append(
@@ -601,6 +658,38 @@ function describeJournal(filter) {
   return parts.length ? parts.join(' · ') : 'tutto il journal';
 }
 
+// Log trovati nelle configurazioni dei server web: si aggiungono con un clic.
+async function loadDiscovered() {
+  const list = $('discovered-list');
+  list.replaceChildren();
+  $('discovered').hidden = true;
+  try {
+    const { found } = await api('discover');
+    for (const item of found) {
+      const row = element('div', undefined, 'discovered-row');
+      const text = element('div');
+      text.append(element('strong', item.program + ' · ' + item.path), element('small', 'da ' + item.from));
+      const add = element('button', 'Aggiungi →', 'primary');
+      add.type = 'button';
+      add.addEventListener('click', () => {
+        const name = item.path.split('/').pop().replace(/\.log$/, '');
+        addKind = item.kind;
+        configureSource(
+          { kind: item.kind, path: item.path },
+          item.program + ' · ' + item.path,
+          item.program.toLowerCase() + '-' + name,
+        );
+        $('source-kind').value = name.includes('error') ? 'error' : 'access';
+      });
+      row.append(text, add);
+      list.append(row);
+    }
+    $('discovered').hidden = found.length === 0;
+  } catch (_) {
+    // Solo un suggerimento: se non funziona, resta la scelta manuale.
+  }
+}
+
 // Passa all'ultimo passaggio proponendo un nome libero.
 function configureSource(source, description, suggestion) {
   selected = source;
@@ -620,6 +709,267 @@ function configureSource(source, description, suggestion) {
   showWizardStep(3);
   $('source-name').focus();
 }
+
+// ---------- statistiche ----------
+
+let statsSource = '';
+
+// Una tabella semplice; `bar` aggiunge una barra proporzionale al numero.
+function statsTable(title, rows, bar = false) {
+  const box = element('div', undefined, 'stats-box');
+  box.append(element('h3', title));
+  if (rows.length === 0) {
+    box.append(element('p', 'Nessun dato.', 'muted'));
+    return box;
+  }
+  const max = Math.max(...rows.map((r) => r[1]));
+  const table = element('table');
+  for (const [label, value, extra] of rows) {
+    const tr = element('tr');
+    const name = element('td', String(label));
+    const cell = element('td', extra === undefined ? value.toLocaleString('it-IT') : extra);
+    if (bar) {
+      const fill = element('span', undefined, 'stats-bar');
+      fill.style.width = Math.max(2, (value / max) * 100) + '%';
+      name.append(fill);
+    }
+    tr.append(name, cell);
+    table.append(tr);
+  }
+  box.append(table);
+  return box;
+}
+
+async function loadStats() {
+  const source = state.sources.find((s) => s.source === statsSource);
+  $('stats-title').textContent = 'Statistiche · ' + (source ? source.label || source.source : statsSource);
+  $('stats-body').replaceChildren(element('p', 'Calcolo…', 'muted'));
+  try {
+    const stats = await api('stats', { source: statsSource, days: Number($('stats-days').value) });
+    $('stats-summary').textContent =
+      stats.requests.toLocaleString('it-IT') + ' richieste riconosciute' +
+      (stats.other_lines ? ' · ' + stats.other_lines.toLocaleString('it-IT') + ' righe di altro formato' : '');
+    const body = $('stats-body');
+    body.replaceChildren(
+      statsTable('Richieste per giorno', stats.per_day, true),
+      statsTable('Pagine più richieste', stats.top_paths, true),
+      statsTable('Codici di risposta', stats.statuses, true),
+      statsTable('Indirizzi più frequenti', stats.top_ips, true),
+    );
+    if (stats.slowest.length) {
+      const rows = stats.slowest.map(([path, ms, count]) => [path, count, ms.toFixed(2) + ' ms']);
+      body.append(statsTable('Pagine più lente (media)', rows));
+    }
+    if (stats.requests === 0) {
+      body.replaceChildren(
+        element('p', 'Nessuna richiesta HTTP riconosciuta: le statistiche valgono per i log di ' +
+          'accesso di Caddy (JSON) e Nginx o Apache (formato combined).', 'muted'),
+      );
+    }
+  } catch (error) {
+    $('stats-body').replaceChildren(element('div', error.message, 'card-error'));
+  }
+}
+
+$('stats-days').addEventListener('change', loadStats);
+
+// ---------- dati personali: cancellare, esportare, registro ----------
+
+let lastFound = null; // cosa ha trovato l'ultima anteprima
+
+function privacyRequest() {
+  return {
+    source: $('privacy-source').value,
+    ip: $('privacy-ip').value.trim() || null,
+    text: $('privacy-text').value.trim(),
+    originals: $('privacy-originals').checked,
+  };
+}
+
+function prepareProtection() {
+  const select = $('privacy-source');
+  const wanted = select.value;
+  select.replaceChildren(new Option('Tutte', ''));
+  for (const s of state.sources) select.add(new Option(s.label || s.source, s.source));
+  select.value = wanted;
+  loadAudit();
+}
+
+const FILE_STATUS = {
+  would_rewrite: 'verrebbe riscritto',
+  rewritten: 'riscritto',
+  skipped: 'saltato',
+};
+
+function renderFound(found, done) {
+  const box = $('privacy-result');
+  box.replaceChildren();
+  const total = (found.counts || []).reduce((n, c) => n + c.rows, 0);
+  box.append(element('h3', done ? 'Cancellate ' + found.rows + ' righe' : total + ' righe nell’archivio di Loglem'));
+  if (!done) {
+    const list = element('ul');
+    for (const c of found.counts) list.append(element('li', c.source + ': ' + c.rows + ' righe'));
+    box.append(list);
+  }
+  for (const group of found.originals || []) {
+    for (const file of group.files.filter((f) => f.status !== 'nothing')) {
+      let text = group.source + ' · ' + file.file.split('/').pop() + ': ' + (FILE_STATUS[file.status] || file.status);
+      if (file.matched) text += ' (' + file.matched + ' righe)';
+      if (file.note) text += ' — ' + file.note;
+      box.append(element('p', text, file.status === 'skipped' ? 'muted' : ''));
+    }
+  }
+  if (done && found.resealed_days) {
+    box.append(element('p', 'Modalità prova: ricalcolate le impronte di ' + found.resealed_days + ' giorni.', 'card-info'));
+  }
+  box.hidden = false;
+  $('privacy-erase').hidden = done || total === 0 && !(found.originals || []).some((g) => g.files.some((f) => f.status === 'would_rewrite'));
+}
+
+$('privacy-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  perform(event.submitter, async () => {
+    const request = privacyRequest();
+    if (!request.ip && !request.text) throw new Error('Scrivi un indirizzo IP o un testo da cercare.');
+    lastFound = await api('erase-preview', request);
+    renderFound(lastFound, false);
+  });
+});
+
+$('privacy-export').addEventListener('click', () =>
+  perform($('privacy-export'), async () => {
+    const request = privacyRequest();
+    if (!request.ip && !request.text) throw new Error('Scrivi un indirizzo IP o un testo da cercare.');
+    const { rows, text } = await api('export', request);
+    if (rows === 0) {
+      showNotice('Nessuna riga trovata: non c’è nulla da scaricare.');
+      return;
+    }
+    const link = element('a');
+    link.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+    link.download = 'dati-persona.txt';
+    link.click();
+    URL.revokeObjectURL(link.href);
+    showNotice('Scaricate ' + rows + ' righe. Cancella il file dopo averlo inviato.');
+  }),
+);
+
+$('privacy-erase-button').addEventListener('click', () =>
+  perform($('privacy-erase-button'), async () => {
+    const request = { ...privacyRequest(), reason: $('privacy-reason').value.trim() };
+    if (!request.reason) throw new Error('Scrivi il motivo (per esempio il numero della pratica).');
+    const question =
+      'Cancellare queste righe da Loglem' +
+      (request.originals ? ' e dai file originali' : '') +
+      '? Non si può annullare.';
+    if (!confirm(question)) return;
+    const done = await api('erase', request);
+    renderFound(done, true);
+    $('privacy-reason').value = '';
+    await refresh();
+    loadAudit();
+  }),
+);
+
+async function loadAudit() {
+  const list = $('audit-list');
+  try {
+    const { entries } = await api('audit');
+    list.replaceChildren();
+    if (entries.length === 0) {
+      list.append(element('p', 'Ancora nessuna voce.', 'muted'));
+      return;
+    }
+    const table = element('table', undefined, 'audit-table');
+    for (const e of entries.slice(0, 100)) {
+      const row = element('tr');
+      row.append(
+        element('td', formatDate(e.at)),
+        element('td', e.user),
+        element('td', e.action),
+        element('td', e.detail),
+      );
+      table.append(row);
+    }
+    list.append(table);
+  } catch (error) {
+    list.replaceChildren(element('div', error.message, 'card-error'));
+  }
+}
+
+$('audit-reload').addEventListener('click', () => perform($('audit-reload'), loadAudit));
+
+// ---------- sistema: aggiornamenti e impostazioni ----------
+
+async function showUpdateStatus() {
+  try {
+    const { status, version } = await api('update-status');
+    $('update-status').textContent = 'Versione installata: ' + version + ' · ' + status;
+  } catch (error) {
+    $('update-status').textContent = error.message;
+  }
+}
+
+$('update-check').addEventListener('click', () =>
+  perform($('update-check'), async () => {
+    const { installed, latest } = await api('update-check');
+    const newer = latest !== installed;
+    $('update-status').textContent = newer
+      ? 'Disponibile la versione ' + latest + ' (installata: ' + installed + ').'
+      : 'Hai già l’ultima versione (' + installed + ').';
+    $('update-install').hidden = !newer;
+  }),
+);
+
+// Durante l'aggiornamento il servizio si riavvia: si aspetta che torni e si ricarica la pagina.
+$('update-install').addEventListener('click', () =>
+  perform($('update-install'), async () => {
+    if (!confirm('Installare la nuova versione? Loglem si riavvierà.')) return;
+    await api('update-install');
+    for (let i = 0; i < 120; i++) {
+      await sleep(2000);
+      try {
+        const { status, version } = await api('update-status');
+        $('update-status').textContent = status;
+        if (/non riuscito|failed/i.test(status)) return;
+        if (version !== state.version) {
+          location.reload();
+          return;
+        }
+      } catch (_) {
+        $('update-status').textContent = 'Loglem si sta riavviando…';
+      }
+    }
+  }),
+);
+
+$('config-export').addEventListener('click', () =>
+  perform($('config-export'), async () => {
+    const config = await api('config-export');
+    const file = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+    const link = element('a');
+    link.href = URL.createObjectURL(file);
+    link.download = 'loglem-impostazioni.json';
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }),
+);
+
+$('config-file').addEventListener('change', async () => {
+  const file = $('config-file').files[0];
+  $('config-file').value = '';
+  if (!file) return;
+  try {
+    const config = JSON.parse(await file.text());
+    const count = (config.sources || []).length;
+    if (!confirm('Sostituire le impostazioni attuali con quelle del file (' + count + ' sorgenti)?')) return;
+    const { message } = await api('config-import', { config });
+    await refresh();
+    showNotice(message);
+  } catch (error) {
+    showNotice(error instanceof SyntaxError ? 'Il file non è un JSON valido.' : error.message, true);
+  }
+});
 
 // ---------- problemi (diagnostica) ----------
 
@@ -689,6 +1039,7 @@ function route() {
     selected = null;
     container = null;
     showWizardStep(1);
+    loadDiscovered();
   } else if (view === 'settings') {
     try {
       settingsSource = state.sources.find((s) => s.source === decodeURIComponent(id));
@@ -702,6 +1053,13 @@ function route() {
     if (settingsSource) populateSettings();
   } else if (view === 'diagnostics') {
     loadDiagnostics();
+  } else if (view === 'privacy') {
+    prepareProtection();
+  } else if (view === 'system') {
+    showUpdateStatus();
+  } else if (view === 'stats') {
+    statsSource = decodeURIComponent(id);
+    loadStats();
   }
   window.scrollTo(0, 0);
 }
@@ -720,13 +1078,73 @@ for (const kind of ['folder', 'caddy']) {
   );
 }
 
-$('choose-podman').addEventListener('click', () =>
-  perform($('choose-podman'), async () => {
-    addKind = 'podman';
+for (const runtime of ['podman', 'docker']) {
+  const button = $('choose-' + runtime);
+  button.addEventListener('click', () =>
+    perform(button, async () => {
+      addKind = runtime;
+      $('podman-step-title').textContent =
+        'Quale container ' + (runtime === 'docker' ? 'Docker' : 'Podman') + ' vuoi seguire?';
+      showWizardStep(2);
+      await loadContainers();
+    }),
+  );
+}
+
+// ---------- Kubernetes ----------
+
+let chosenPod = null;
+
+async function loadPods() {
+  chosenPod = null;
+  $('use-kubernetes').disabled = true;
+  const list = $('kubernetes-pods');
+  list.replaceChildren(element('p', 'Chiedo i pod a kubectl…', 'muted'));
+  try {
+    const { pods } = await api('kubernetes-pods');
+    list.replaceChildren();
+    if (pods.length === 0) list.append(element('p', 'Nessun pod trovato nel cluster.', 'muted'));
+    for (const pod of pods) {
+      const label = element('label', undefined, 'container-choice');
+      const radio = element('input');
+      radio.type = 'radio';
+      radio.name = 'pod';
+      radio.addEventListener('change', () => {
+        chosenPod = pod;
+        $('use-kubernetes').disabled = false;
+        $('kubernetes-follow-app').disabled = !pod.app;
+      });
+      const text = element('div');
+      const app = pod.app ? ' · app=' + pod.app : '';
+      text.append(element('strong', pod.namespace + '/' + pod.name), element('small', pod.phase + app));
+      label.append(radio, text);
+      list.append(label);
+    }
+  } catch (error) {
+    list.replaceChildren(element('div', error.message, 'card-error'));
+    throw error;
+  }
+}
+
+$('choose-kubernetes').addEventListener('click', () =>
+  perform($('choose-kubernetes'), async () => {
+    addKind = 'kubernetes';
     showWizardStep(2);
-    await loadContainers();
+    await loadPods();
   }),
 );
+
+$('use-kubernetes').addEventListener('click', () => {
+  if (!chosenPod) return;
+  const byApp = $('kubernetes-follow-app').checked && chosenPod.app;
+  const target = byApp
+    ? { namespace: chosenPod.namespace, selector: 'app=' + chosenPod.app }
+    : { namespace: chosenPod.namespace, pod: chosenPod.name };
+  const description = byApp
+    ? 'Kubernetes · tutti i pod con app=' + chosenPod.app + ' in ' + chosenPod.namespace
+    : 'Kubernetes · pod ' + chosenPod.name;
+  configureSource({ kind: 'kubernetes', kubernetes: target }, description, byApp ? chosenPod.app : chosenPod.name);
+});
 
 for (const button of document.querySelectorAll('[data-back-type]')) {
   button.addEventListener('click', () => {
@@ -774,9 +1192,15 @@ $('use-journal').addEventListener('click', () => {
 
 $('use-podman').addEventListener('click', () => {
   if (!container) return;
+  if (!$('follow-name-box').hidden && $('follow-by-name').checked) {
+    const journal = { units: [], identifiers: [], matches: ['CONTAINER_NAME=' + container.name], priority: null };
+    configureSource({ kind: 'journal', journal }, 'Container ' + container.name + ' (per nome, dal journal)', container.name);
+    return;
+  }
+  const runtime = addKind === 'docker' ? 'Docker' : 'Podman';
   configureSource(
-    { kind: 'podman', container: container.id, connection: container.connection },
-    'Container Podman · ' + container.name,
+    { kind: addKind, container: container.id, connection: container.connection },
+    'Container ' + runtime + ' · ' + container.name,
     container.name,
   );
 });
@@ -884,6 +1308,7 @@ function populateSettings() {
 
   $('file-source-settings').hidden = !hasFiles;
   $('podman-reconnect').hidden = !isPodman;
+  showContainerAdvice(s);
   $('settings-source-path').value = s.input.path || '';
   $('rotated-settings').hidden = !isRotatedFile;
   $('remove-rotated').checked = s.remove_rotated;
@@ -899,6 +1324,22 @@ function populateSettings() {
   $('detach-source').disabled = s.detached;
   $('replacement-container').replaceChildren(new Option('Carica prima l’elenco', ''));
   $('reconnect-connection').value = '';
+}
+
+// Per i container: dove il runtime tiene i log e come limitarli.
+async function showContainerAdvice(source) {
+  const box = $('container-log-box');
+  const runtime = source.input.kind;
+  box.hidden = true;
+  if (runtime !== 'podman' && runtime !== 'docker') return;
+  try {
+    const connection = source.input.connection || source.input.context || null;
+    const logs = await api('container-logs', { runtime, connection, container: source.input.container });
+    $('container-log-advice').textContent = 'Driver dei log: ' + logs.driver + '. ' + logs.advice;
+    box.hidden = false;
+  } catch (_) {
+    // Il container potrebbe non esistere più: il resto delle impostazioni resta utilizzabile.
+  }
 }
 
 async function loadCaddySnippet(path) {
