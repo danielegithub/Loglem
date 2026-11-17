@@ -98,7 +98,9 @@ pub fn apply(dir: &Path, change: Change) -> Result<Source> {
                 *current = path;
             }
             Input::Podman { .. } => bail!("Per Podman scegli un container"),
-            Input::Journal(_) => bail!("Il journal non ha un percorso da cambiare"),
+            Input::Journal(_) | Input::Docker { .. } | Input::Kubernetes(_) => {
+                bail!("Questa sorgente non ha un percorso da cambiare")
+            }
         }
     }
     if let Some(container) = change.container {
@@ -262,7 +264,9 @@ fn relocate(old: &Path, new: &Path) -> Result<()> {
 fn is_current_path(input: &Input, requested: &Path) -> bool {
     match input {
         Input::Folder { path } | Input::File { path, .. } => path == requested,
-        Input::Podman { .. } | Input::Journal(_) => false,
+        Input::Podman { .. } | Input::Journal(_) | Input::Docker { .. } | Input::Kubernetes(_) => {
+            false
+        }
     }
 }
 
@@ -296,7 +300,9 @@ pub fn cleanup_originals(source: &Source, store: &mut Archive) -> Result<Cleanup
     let (active, active_files) = match &source.input {
         Input::File { path, .. } => (path.clone(), vec![path.clone()]),
         Input::Folder { path } => (path.clone(), sources::file::folder_files(path)?),
-        Input::Podman { .. } | Input::Journal(_) => return Ok(report),
+        Input::Podman { .. } | Input::Journal(_) | Input::Docker { .. } | Input::Kubernetes(_) => {
+            return Ok(report)
+        }
     };
     let active_ids: Vec<String> = active_files
         .iter()

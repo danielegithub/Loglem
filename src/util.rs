@@ -96,8 +96,26 @@ impl Lock {
     }
 }
 
+/// 32 byte casuali dal sistema operativo (anche su Windows, dove non c'è /dev/urandom).
+pub fn random_bytes() -> Result<[u8; 32]> {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes)
+        .map_err(|e| anyhow::anyhow!("Numeri casuali non disponibili: {e}"))?;
+    Ok(bytes)
+}
+
 pub fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+/// Catena di impronte di un file, riga per riga: ogni passo unisce l'impronta precedente
+/// e i byte della riga (a capo compreso). Due file con le stesse righe, in ordine, hanno la
+/// stessa catena: serve a controllare un file senza tenerne una copia identica.
+pub fn chain_next(previous: &str, line: &[u8]) -> String {
+    let mut hash = Sha256::new();
+    hash.update(previous.as_bytes());
+    hash.update(line);
+    format!("{:x}", hash.finalize())
 }
 
 /// Shared access for collection/search; exclusive access while relocating an archive.
@@ -167,4 +185,27 @@ pub fn bytes_on_disk(path: &Path) -> u64 {
     .filter_map(|p| fs::metadata(p).ok())
     .map(|m| m.len())
     .sum()
+}
+
+/// Durata in parole, per i messaggi: «45 secondi», «3 ore e 5 minuti», «2 giorni e 4 ore».
+pub fn human_duration(nanos: i64) -> String {
+    let seconds = (nanos / 1_000_000_000).max(0);
+    let plural = |n: i64, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    let (days, hours, minutes) = (seconds / 86_400, seconds / 3_600 % 24, seconds / 60 % 60);
+    match (days, hours, minutes) {
+        (0, 0, 0) => plural(seconds, "secondo", "secondi"),
+        (0, 0, m) => plural(m, "minuto", "minuti"),
+        (0, h, 0) => plural(h, "ora", "ore"),
+        (0, h, m) => format!(
+            "{} e {}",
+            plural(h, "ora", "ore"),
+            plural(m, "minuto", "minuti")
+        ),
+        (d, 0, _) => plural(d, "giorno", "giorni"),
+        (d, h, _) => format!(
+            "{} e {}",
+            plural(d, "giorno", "giorni"),
+            plural(h, "ora", "ore")
+        ),
+    }
 }

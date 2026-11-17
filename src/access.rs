@@ -42,11 +42,20 @@ pub struct Access {
     pub address: Option<IpAddr>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub users: Vec<User>,
+    /// Reverse proxy fidati: solo da loro si accettano X-Forwarded-For e X-Forwarded-Proto.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trusted_proxies: Vec<IpAddr>,
+    /// Percorso sotto cui il proxy pubblica la pagina senza toglierlo, es. `/loglem`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_path: Option<String>,
 }
 
 impl Access {
     pub fn is_default(&self) -> bool {
-        self.address.is_none() && self.users.is_empty()
+        self.address.is_none()
+            && self.users.is_empty()
+            && self.trusted_proxies.is_empty()
+            && self.base_path.is_none()
     }
 
     /// Con almeno un utente la pagina chiede sempre nome e password.
@@ -65,6 +74,14 @@ impl Access {
                 "Per aprire la pagina ad altri computer serve almeno un utente con password: \
                  loglem access user-add NOME"
             );
+        }
+        if !self.trusted_proxies.is_empty() && self.users.is_empty() {
+            bail!("Dietro un reverse proxy la pagina va protetta: crea prima un utente");
+        }
+        if let Some(path) = &self.base_path {
+            if !path.starts_with('/') || path.ends_with('/') || path.contains(['?', '#', ' ']) {
+                bail!("Il percorso base deve essere del tipo /loglem");
+            }
         }
         let mut names = std::collections::HashSet::new();
         for user in &self.users {
@@ -112,12 +129,7 @@ pub fn hash_password(password: &str) -> Result<String> {
         .to_string())
 }
 
-fn random_bytes() -> Result<[u8; 32]> {
-    use std::io::Read;
-    let mut bytes = [0u8; 32];
-    std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
-    Ok(bytes)
-}
+use crate::util::random_bytes;
 
 fn new_salt() -> Result<SaltString> {
     SaltString::encode_b64(&random_bytes()?[..16])
@@ -128,6 +140,35 @@ fn password_matches(user: &User, password: &str) -> bool {
     PasswordHash::new(&user.password_hash)
         .map(|hash| hasher().verify_password(password.as_bytes(), &hash).is_ok())
         .unwrap_or(false)
+}
+
+/// Cosa si sa della richiesta dopo aver considerato un eventuale proxy fidato.
+pub struct Client {
+    /// L'indirizzo reale del visitatore (per il blocco dei tentativi).
+    pub ip: IpAddr,
+    /// Vero se il visitatore usa HTTPS verso il proxy.
+    pub https: bool,
+}
+
+impl Access {
+    /// Le intestazioni del proxy valgono solo se la connessione arriva da un proxy fidato.
+    pub fn client(&self, peer: IpAddr, forwarded_for: Option<&str>, proto: Option<&str>) -> Client {
+        if !self.trusted_proxies.contains(&peer) {
+            return Client {
+                ip: peer,
+                https: false,
+            };
+        }
+        // L'ultimo indirizzo è quello aggiunto dal proxy fidato: gli altri li manda il client.
+        let ip = forwarded_for
+            .and_then(|list| list.rsplit(',').next())
+            .and_then(|ip| ip.trim().parse().ok())
+            .unwrap_or(peer);
+        Client {
+            ip,
+            https: proto.is_some_and(|p| p.eq_ignore_ascii_case("https")),
+        }
+    }
 }
 
 // ---------- gestione da terminale ----------

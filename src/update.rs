@@ -35,7 +35,10 @@ pub struct Manifest {
 
 pub fn target() -> Result<&'static str> {
     if !cfg!(target_os = "linux") {
-        bail!("Automatic updates currently support Linux only");
+        bail!(
+            "Gli aggiornamenti automatici sono disponibili per ora su Linux: \
+             su questo sistema scarica la nuova versione a mano"
+        );
     }
     match std::env::consts::ARCH {
         "x86_64" => Ok("x86_64-unknown-linux-gnu"),
@@ -313,7 +316,7 @@ fn apply_inner(dir: &Path, stage: &Path) -> Result<()> {
         bail!("Executable version does not match signed manifest");
     }
     status(dir, "Stopping collector and installing update")?;
-    service::run(&["stop", service::UNIT])?;
+    service::stop()?;
     let mut replaced = false;
     let replacement = (|| -> Result<()> {
         // Copy, sync, then replace atomically on the same filesystem.
@@ -324,7 +327,7 @@ fn apply_inner(dir: &Path, stage: &Path) -> Result<()> {
         fs::rename(&pending, &install.executable)?;
         replaced = true;
         util::sync_dir(parent)?;
-        service::run(&["start", service::UNIT])?;
+        service::start()?;
         thread::sleep(Duration::from_secs(2));
         if !service::is_active()? {
             bail!("Updated service failed to remain active");
@@ -332,13 +335,12 @@ fn apply_inner(dir: &Path, stage: &Path) -> Result<()> {
         Ok(())
     })();
     if let Err(error) = replacement {
-        let _ = service::run(&["stop", service::UNIT]);
+        let _ = service::stop();
         if replaced {
             fs::rename(&backup, &install.executable)?;
             util::sync_dir(parent)?;
         }
-        service::run(&["start", service::UNIT])
-            .context("Update failed and previous service could not be restarted")?;
+        service::start().context("Update failed and previous service could not be restarted")?;
         bail!("Previous version restored: {error:#}");
     }
     status(

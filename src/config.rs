@@ -46,6 +46,7 @@ pub fn validate(config: &Config) -> Result<()> {
         bail!("Unsupported configuration version {}", config.version);
     }
     config.access.validate()?;
+    config.alerts.validate()?;
     if !(1..=3600).contains(&config.poll_seconds) {
         bail!("Polling must be between 1 and 3600 seconds");
     }
@@ -59,6 +60,7 @@ pub fn validate(config: &Config) -> Result<()> {
             bail!("Retention must be between 1 and 36500 days");
         }
         source.period().validate()?;
+        source.privacy.validate(source)?;
         if source.label.as_ref().is_some_and(|s| {
             s.trim().is_empty() || s.len() > 120 || s.chars().any(char::is_control)
         }) {
@@ -82,7 +84,10 @@ pub fn validate(config: &Config) -> Result<()> {
                 Input::File { path, .. } if path.parent() == Some(completed.as_path()) => {
                     bail!("La cartella dei file conclusi deve essere separata dal file attivo")
                 }
-                Input::Podman { .. } | Input::Journal(_) => {
+                Input::Podman { .. }
+                | Input::Journal(_)
+                | Input::Docker { .. }
+                | Input::Kubernetes(_) => {
                     bail!("La pulizia dei file conclusi vale solo per sorgenti file")
                 }
                 _ => {}
@@ -90,6 +95,12 @@ pub fn validate(config: &Config) -> Result<()> {
         }
         match &source.input {
             Input::Journal(filter) => filter.validate()?,
+            Input::Kubernetes(target) => target.validate()?,
+            Input::Docker { container, .. } => {
+                if container.len() != 64 || !container.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    bail!("Identificativo del container Docker non valido");
+                }
+            }
             Input::Folder { path } => {
                 if !path.is_absolute() {
                     bail!("Choose an absolute folder path");

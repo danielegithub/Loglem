@@ -1,5 +1,5 @@
 //! Small local HTTP interface. Bind port 0: the OS reserves a free port atomically.
-use crate::{access, collector, config, sources, timestamps, util};
+use crate::{access, audit, collector, config, query::Query, sources, timestamps, util};
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -28,8 +28,7 @@ struct App {
 
 impl App {
     fn new(dir: PathBuf) -> Result<Self> {
-        let mut random = [0u8; 32];
-        fs::File::open("/dev/urandom")?.read_exact(&mut random)?;
+        let random = util::random_bytes()?;
         Ok(Self {
             worker: crate::runtime::Worker::start(dir.clone()),
             dir,
@@ -47,8 +46,15 @@ pub fn serve(dir: &Path) -> Result<()> {
     let Ok(_instance) = util::Lock::acquire(&dir.join("service.lock")) else {
         return already_running(&dir);
     };
-    let access = config::load(&dir)?.access;
+    let config = config::load(&dir)?;
+    migrate_archives(&dir, &config);
+    let access = config.access;
     let listener = bind(&dir, access.bind_address())?;
+    if check_previous_stop(&dir)? {
+        println!(
+            "Nota: l'ultimo arresto non è stato regolare. Riprendo dall'ultimo punto salvato."
+        );
+    }
     let address = listener.local_addr()?.to_string();
     let who = if access.login_required() {
         "Serve nome utente e password (loglem access user-list)."
@@ -100,8 +106,36 @@ pub fn serve(dir: &Path) -> Result<()> {
             active.fetch_sub(1, Ordering::SeqCst);
         });
     }
-    println!("Arresto in corso: attendo la fine della lettura in corso…");
-    Ok(()) // `app` viene rilasciato qui e il raccoglitore termina il giro in corso.
+    println!("Arresto: ultima lettura di tutte le sorgenti (al massimo 30 secondi)…");
+    if !app.worker.finish(Duration::from_secs(30)) {
+        println!("Ultima lettura non completata in tempo: riprenderà al prossimo avvio.");
+    }
+    fs::remove_file(app.dir.join(RUNNING))?;
+    Ok(())
+}
+
+/// Esiste mentre Loglem è in funzione; se c'è ancora all'avvio, l'arresto precedente
+/// è stato brusco (crash, corrente, kill -9).
+const RUNNING: &str = "running";
+
+/// Segnala un arresto brusco precedente. Le letture sono salvate insieme ai loro punti
+/// di ripartenza, quindi si riprende da dove ci si era fermati senza perdere righe.
+fn check_previous_stop(dir: &Path) -> Result<bool> {
+    let marker = dir.join(RUNNING);
+    let unclean = marker.exists();
+    if unclean {
+        crate::diagnostics::error(
+            "service",
+            "startup",
+            None,
+            &anyhow::anyhow!(
+                "Loglem non si era fermato in modo regolare (crash, mancanza di corrente o \
+                 arresto forzato). La lettura riprende dall'ultimo punto salvato."
+            ),
+        );
+    }
+    util::atomic_write(&marker, std::process::id().to_string().as_bytes())?;
+    Ok(unclean)
 }
 
 /// Le richieste della diretta restano aperte fino a 15 secondi: servono più posti.
@@ -112,6 +146,22 @@ fn page_url(address: &str) -> String {
     match address.strip_prefix("0.0.0.0:") {
         Some(port) => format!("http://<indirizzo di questo computer>:{port} (tutte le interfacce)"),
         None => format!("http://{address}"),
+    }
+}
+
+/// Porta gli archivi del formato precedente al nuovo, prima di accettare richieste.
+fn migrate_archives(dir: &Path, config: &crate::model::Config) {
+    for source in &config.sources {
+        let path = config::archive_path(dir, &source.id);
+        if !path.exists() || !crate::archive::Archive::needs_migration(&path) {
+            continue;
+        }
+        println!("Aggiorno l'archivio «{}» al nuovo formato…", source.id);
+        if let Err(error) = crate::archive::Archive::open(&path) {
+            // Non si ferma tutto per un archivio: la sorgente mostrerà l'errore.
+            crate::diagnostics::error("service", "migrate_archive", Some(&source.id), &error);
+            println!("  non riuscito: {error:#}");
+        }
     }
 }
 
@@ -166,6 +216,7 @@ fn respond_with(
 ) -> Result<()> {
     let reason = match status {
         200 => "OK",
+        301 => "Moved Permanently",
         400 => "Bad Request",
         401 => "Unauthorized",
         403 => "Forbidden",
@@ -297,14 +348,130 @@ fn serve_static(stream: TcpStream, route: &str, csrf: Option<&str>) -> Result<()
     respond(stream, 200, content_type, &body)
 }
 
+/// Dati di una persona: anteprima, cancellazione, esportazione e registro degli accessi.
+/// Solo per gli amministratori (non sono tra le azioni dei lettori).
+fn data_rights(route: &str, app: &App, body: &Value, who: &str) -> Result<Value> {
+    let source = body
+        .get("source")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty());
+    let query: Query = serde_json::from_value(body.clone())?;
+    let originals = body
+        .get("originals")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    match route {
+        "/api/erase-preview" => {
+            let counts: Vec<Value> = crate::erase::preview(&app.dir, source, &query)?
+                .into_iter()
+                .map(|(name, rows)| json!({"source": name, "rows": rows}))
+                .collect();
+            let files = if originals {
+                crate::erase::preview_originals(&app.dir, source, &query)?
+                    .into_iter()
+                    .map(|(name, files)| json!({"source": name, "files": files}))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            Ok(json!({"counts": counts, "originals": files}))
+        }
+        "/api/erase" => {
+            let reason = body.get("reason").and_then(Value::as_str).unwrap_or("");
+            let done = crate::erase::erase(
+                &app.dir,
+                source,
+                &query,
+                reason,
+                &format!("web:{who}"),
+                originals,
+            )?;
+            app.worker.request();
+            let files: Vec<Value> = done
+                .originals
+                .iter()
+                .map(|(name, files)| json!({"source": name, "files": files}))
+                .collect();
+            Ok(json!({
+                "rows": done.rows,
+                "sources": done.sources,
+                "resealed_days": done.resealed_days,
+                "originals": files,
+            }))
+        }
+        "/api/export" => {
+            let mut out = Vec::new();
+            let rows = crate::erase::export(
+                &app.dir,
+                source,
+                &query,
+                &mut out,
+                false,
+                &format!("web:{who}"),
+            )?;
+            if out.len() > 20 * 1024 * 1024 {
+                bail!("Troppe righe per la pagina ({rows}): restringi il filtro o usa «loglem export»");
+            }
+            Ok(json!({"rows": rows, "text": String::from_utf8_lossy(&out)}))
+        }
+        _ => Ok(json!({"entries": audit::recent(&app.dir, 90)?})),
+    }
+}
+
+/// Le azioni che finiscono nel registro degli accessi, con cosa scriverci (mai i valori
+/// cercati: solo il tipo di filtro).
+fn audited(route: &str, body: &Value) -> Option<(&'static str, String)> {
+    let source = body
+        .get("source")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("tutte");
+    let filters = || {
+        serde_json::from_value::<Query>(body.clone())
+            .map(|q| audit::filter_kinds(&q))
+            .unwrap_or_default()
+    };
+    match route {
+        "/api/search" => Some((
+            "ricerca",
+            format!("sorgente: {source}; filtri: {}", filters()),
+        )),
+        "/api/tail" if body.get("after").is_none_or(Value::is_null) => Some((
+            "diretta",
+            format!("sorgente: {source}; filtri: {}", filters()),
+        )),
+        "/api/stats" => Some(("statistiche", format!("sorgente: {source}"))),
+        "/api/config-export" => Some(("esporta impostazioni", String::new())),
+        "/api/config-import" => Some(("importa impostazioni", String::new())),
+        "/api/update-install" => Some(("aggiornamento", String::new())),
+        "/api/add" => Some((
+            "nuova sorgente",
+            format!(
+                "tipo: {}",
+                body.get("kind").and_then(Value::as_str).unwrap_or("?")
+            ),
+        )),
+        "/api/source-settings" | "/api/retention" => Some((
+            "modifica impostazioni",
+            format!(
+                "sorgente: {}",
+                body.get("name").and_then(Value::as_str).unwrap_or("?")
+            ),
+        )),
+        _ => None,
+    }
+}
+
 /// Azioni concesse anche a chi può solo consultare.
 const READER_ROUTES: &[&str] = &[
     "/api/status",
     "/api/search",
     "/api/tail",
+    "/api/stats",
     "/api/diagnostics",
     "/api/me",
     "/api/logout",
+    "/api/alert-seen",
 ];
 
 fn handle(stream: TcpStream, app: &App, address: &str) -> Result<()> {
@@ -317,6 +484,28 @@ fn handle(stream: TcpStream, app: &App, address: &str) -> Result<()> {
     let access = config::load(&app.dir)?.access;
     let login = access.login_required();
     let host = request.headers.get("host").cloned().unwrap_or_default();
+    let client = access.client(
+        stream.peer_addr()?.ip(),
+        request.headers.get("x-forwarded-for").map(String::as_str),
+        request.headers.get("x-forwarded-proto").map(String::as_str),
+    );
+    // Dietro un proxy che non toglie il prefisso (es. /loglem), lo si toglie qui.
+    let base = access.base_path.as_deref().unwrap_or("");
+    let path = request.route.split('?').next().unwrap_or("");
+    if !base.is_empty() && path == base {
+        let location = format!("Location: {base}/\r\n");
+        return respond_with(stream, 301, "text/plain", &location, b"");
+    }
+    let route = path
+        .strip_prefix(base)
+        .filter(|r| r.starts_with('/'))
+        .unwrap_or(path)
+        .to_owned();
+    // Path=/: il proxy può pubblicare la pagina sotto prefissi diversi (/loglem, /lg…).
+    let cookie_attributes = format!(
+        "HttpOnly; SameSite=Strict; Path=/{}",
+        if client.https { "; Secure" } else { "" }
+    );
     // Senza utenti la pagina vale solo per l'indirizzo esatto (difesa dal DNS rebinding);
     // con gli utenti protegge la password, e il nome usato per raggiungerla è libero.
     if !login && host != address {
@@ -338,7 +527,7 @@ fn handle(stream: TcpStream, app: &App, address: &str) -> Result<()> {
             (true, Some(session)) => Some(session.csrf.as_str()),
             (true, None) => None,
         };
-        return serve_static(stream, &request.route, csrf);
+        return serve_static(stream, &route, csrf);
     }
     if request.method != "POST"
         || request.headers.get("content-type").map(String::as_str) != Some("application/json")
@@ -359,7 +548,7 @@ fn handle(stream: TcpStream, app: &App, address: &str) -> Result<()> {
         Ok(body) => body,
         Err(_) => return json_error(stream, 400, "Richiesta non valida", json!({})),
     };
-    let route = request.route.as_str();
+    let route = route.as_str();
     let token = request.headers.get("x-loglem-token").map(String::as_str);
 
     if route == "/api/login" {
@@ -371,13 +560,22 @@ fn handle(stream: TcpStream, app: &App, address: &str) -> Result<()> {
                 json!({}),
             );
         }
-        let peer = stream.peer_addr()?.ip();
         let name = body.get("user").and_then(Value::as_str).unwrap_or("");
         let password = body.get("password").and_then(Value::as_str).unwrap_or("");
-        return match app.sessions.login(&access, peer, name, password) {
+        let attempt = app.sessions.login(&access, client.ip, name, password);
+        match &attempt {
+            Ok(_) => audit::record(&app.dir, name, "accesso", &format!("da {}", client.ip)),
+            Err(_) => audit::record(
+                &app.dir,
+                name,
+                "accesso fallito",
+                &format!("da {}", client.ip),
+            ),
+        }
+        return match attempt {
             Ok((id, session)) => {
                 let cookie = format!(
-                    "Set-Cookie: {}={id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200\r\n",
+                    "Set-Cookie: {}={id}; {cookie_attributes}; Max-Age=43200\r\n",
                     access::COOKIE
                 );
                 let body =
@@ -423,18 +621,27 @@ fn handle(stream: TcpStream, app: &App, address: &str) -> Result<()> {
         );
     }
 
+    let who = session
+        .as_ref()
+        .map_or_else(|| "locale".to_owned(), |s| s.user.clone());
+    if let Some((action, detail)) = audited(route, &body) {
+        audit::record(&app.dir, &who, action, &detail);
+    }
     let result = match route {
         "/api/me" => Ok(json!({
             "login": login,
             "user": session.as_ref().map(|s| s.user.clone()),
             "role": role.unwrap_or(access::Role::Admin),
         })),
+        "/api/erase-preview" | "/api/erase" | "/api/export" | "/api/audit" => {
+            data_rights(route, app, &body, &who)
+        }
         "/api/logout" => {
             if let Some(id) = &session_id {
                 app.sessions.logout(id);
             }
             let expired = format!(
-                "Set-Cookie: {}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0\r\n",
+                "Set-Cookie: {}=; {cookie_attributes}; Max-Age=0\r\n",
                 access::COOKIE
             );
             return respond_with(stream, 200, "application/json", &expired, b"{}");
@@ -481,14 +688,27 @@ struct NewSource {
     archive_dir: Option<String>,
     #[serde(default)]
     journal: Option<sources::journal::Filter>,
+    #[serde(default)]
+    kubernetes: Option<sources::kubernetes::Target>,
 }
 
 fn api(route: &str, app: &App, body: Value) -> Result<Value> {
     let dir = &app.dir;
     match route {
-        "/api/status" => Ok(
-            json!({"sources":collector::statuses(dir)?,"archive_directory":dir,"version":crate::VERSION,"collection":app.worker.progress()}),
-        ),
+        "/api/status" => {
+            let sources = collector::statuses(dir)?;
+            let mut problems =
+                crate::health::problems(&sources, crate::health::DEFAULT_MAX_MINUTES);
+            problems.extend(crate::alerts::evaluate(dir)?);
+            let problems = crate::alerts::hide_acknowledged(dir, problems);
+            Ok(json!({
+                "sources": sources,
+                "archive_directory": dir,
+                "version": crate::VERSION,
+                "collection": app.worker.progress(),
+                "problems": problems,
+            }))
+        }
         "/api/folders" => {
             let requested = body.get("path").and_then(Value::as_str).unwrap_or("");
             let path = if requested.is_empty() {
@@ -511,9 +731,40 @@ fn api(route: &str, app: &App, body: Value) -> Result<Value> {
             let logs = sources::file::folder_files(&path)?;
             Ok(json!({"path":path,"parent":path.parent(),"folders":folders,"logs":logs}))
         }
-        "/api/podman" => Ok(
-            json!({"containers":sources::podman::discover(body.get("connection").and_then(Value::as_str).filter(|s|!s.is_empty()))?}),
-        ),
+        "/api/podman" => {
+            let connection = body
+                .get("connection")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty());
+            let runtime = match body.get("runtime").and_then(Value::as_str) {
+                Some("docker") => sources::podman::Runtime::Docker,
+                _ => sources::podman::Runtime::Podman,
+            };
+            let containers = sources::podman::discover_with(runtime, connection)?;
+            Ok(json!({ "containers": containers }))
+        }
+        "/api/container-logs" => {
+            let runtime = match body.get("runtime").and_then(Value::as_str) {
+                Some("docker") => sources::podman::Runtime::Docker,
+                _ => sources::podman::Runtime::Podman,
+            };
+            let connection = body
+                .get("connection")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty());
+            Ok(serde_json::to_value(sources::podman::log_config(
+                runtime,
+                connection,
+                text(&body, "container")?,
+            )?)?)
+        }
+        "/api/kubernetes-pods" => {
+            let context = body
+                .get("context")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty());
+            Ok(json!({ "pods": sources::kubernetes::discover(context)? }))
+        }
         "/api/add" => {
             let request: NewSource = serde_json::from_value(body)?;
             if request.kind == "caddy" {
@@ -540,6 +791,37 @@ fn api(route: &str, app: &App, body: Value) -> Result<Value> {
                         container: found.id,
                         connection: request.connection,
                     }
+                }
+                "docker" => {
+                    let id = request.container.context("Scegli un container")?;
+                    let runtime = sources::podman::Runtime::Docker;
+                    let found =
+                        sources::podman::discover_with(runtime, request.connection.as_deref())?
+                            .into_iter()
+                            .find(|c| c.id == id || c.name == id)
+                            .context("Container non trovato")?;
+                    crate::model::Input::Docker {
+                        container: found.id,
+                        context: request.connection,
+                    }
+                }
+                "file" => {
+                    // Un log di Nginx o Apache: anche i file ruotati da logrotate
+                    // (access.log.1, access.log.2.gz…).
+                    let path = fs::canonicalize(request.path.context("Scegli un file")?)?;
+                    let name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .context("Nome non valido")?;
+                    crate::model::Input::File {
+                        rotated_pattern: Some(format!("{}.*", glob::Pattern::escape(name))),
+                        path,
+                    }
+                }
+                "kubernetes" => {
+                    let target = request.kubernetes.context("Scegli un pod")?;
+                    target.validate()?;
+                    crate::model::Input::Kubernetes(target)
                 }
                 _ => bail!("Tipo sorgente sconosciuto"),
             };
@@ -614,6 +896,90 @@ fn api(route: &str, app: &App, body: Value) -> Result<Value> {
             Ok(json!({"message":"Durata salvata. Verrà applicata alla prossima raccolta."}))
         }
         "/api/tail" => tail(app, &body),
+        "/api/discover" => {
+            // Solo quello che non è già collegato.
+            let config = config::load(dir)?;
+            let used: Vec<&Path> = config
+                .sources
+                .iter()
+                .filter_map(|s| match &s.input {
+                    crate::model::Input::File { path, .. } => Some(path.as_path()),
+                    _ => None,
+                })
+                .collect();
+            let found: Vec<_> = crate::discover::find_all()
+                .into_iter()
+                .filter(|f| f.exists && !used.iter().any(|u| *u == f.path))
+                .collect();
+            Ok(json!({ "found": found }))
+        }
+        "/api/update-check" => {
+            let manifest = crate::update::check(dir)?;
+            Ok(json!({"installed": crate::VERSION, "latest": manifest.version}))
+        }
+        "/api/update-install" => {
+            // Scaricare può richiedere tempo: si lavora in background e la pagina legge lo stato.
+            let dir = dir.clone();
+            util::atomic_write(
+                &dir.join("updates/status.txt"),
+                b"Scaricamento della nuova versione...",
+            )?;
+            std::thread::spawn(move || {
+                let result = crate::update::prepare(&dir)
+                    .and_then(|stage| crate::update::launch(&dir, &stage));
+                if let Err(error) = result {
+                    let text = format!("Aggiornamento non riuscito: {error:#}");
+                    let _ = util::atomic_write(&dir.join("updates/status.txt"), text.as_bytes());
+                    crate::diagnostics::error("update", "web_install", None, &error);
+                }
+            });
+            Ok(json!({"message": "Aggiornamento avviato"}))
+        }
+        "/api/update-status" => Ok(json!({
+            "status": fs::read_to_string(dir.join("updates/status.txt"))
+                .unwrap_or_else(|_| "Nessun aggiornamento richiesto.".into()),
+            "version": crate::VERSION,
+        })),
+        "/api/config-export" => {
+            // Senza utenti e indirizzo: un file scaricato non deve portare con sé le credenziali.
+            let mut exported = config::load(dir)?;
+            exported.access = Default::default();
+            exported.web_port = None;
+            Ok(serde_json::to_value(exported)?)
+        }
+        "/api/config-import" => {
+            let mut imported: crate::model::Config = serde_json::from_value(
+                body.get("config")
+                    .cloned()
+                    .context("Manca la configurazione")?,
+            )?;
+            config::edit(dir, |current| {
+                // Utenti, indirizzo e porta restano quelli di questo server.
+                imported.access = current.access.clone();
+                imported.web_port = current.web_port;
+                config::validate(&imported)?;
+                *current = imported;
+                Ok(())
+            })?;
+            app.worker.request();
+            Ok(json!({"message": "Impostazioni importate."}))
+        }
+        "/api/stats" => {
+            let days = body
+                .get("days")
+                .and_then(Value::as_u64)
+                .unwrap_or(7)
+                .clamp(1, 3650) as u32;
+            Ok(serde_json::to_value(crate::stats::compute(
+                dir,
+                text(&body, "source")?,
+                days,
+            )?)?)
+        }
+        "/api/alert-seen" => {
+            crate::alerts::acknowledge(dir, text(&body, "id")?)?;
+            Ok(json!({}))
+        }
         "/api/journal-units" => Ok(json!({ "units": sources::journal::units()? })),
         "/api/caddy-snippet" => {
             let path = PathBuf::from(text(&body, "path")?);
@@ -642,7 +1008,7 @@ fn api(route: &str, app: &App, body: Value) -> Result<Value> {
                 body.get("source")
                     .and_then(Value::as_str)
                     .filter(|s| !s.is_empty()),
-                body.get("text").and_then(Value::as_str).unwrap_or(""),
+                &serde_json::from_value::<Query>(body.clone())?,
                 parse("from", false, i64::MIN)?,
                 parse("to", true, i64::MAX)?,
                 200,
@@ -660,14 +1026,14 @@ fn tail(app: &App, body: &Value) -> Result<Value> {
         .get("source")
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty());
-    let text = body.get("text").and_then(Value::as_str).unwrap_or("");
+    let query: Query = serde_json::from_value(body.clone())?;
     let after: Option<HashMap<String, i64>> = match body.get("after") {
         Some(Value::Null) | None => None,
         Some(value) => Some(serde_json::from_value(value.clone())?),
     };
     let started = std::time::Instant::now();
     loop {
-        let (rows, next) = collector::tail(&app.dir, source, text, after.as_ref())?;
+        let (rows, next) = collector::tail(&app.dir, source, &query, after.as_ref())?;
         if !rows.is_empty() || after.is_none() || started.elapsed() > Duration::from_secs(15) {
             return Ok(json!({ "rows": rows, "after": next }));
         }

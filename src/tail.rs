@@ -1,5 +1,5 @@
 //! `loglem tail`: mostra le righe nuove appena arrivano, in locale o da un altro computer.
-use crate::{collector, model::SearchRow, util};
+use crate::{collector, model::SearchRow, query::Query, util};
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::{path::Path, time::Duration};
@@ -18,21 +18,21 @@ fn print(row: &SearchRow) {
 
 /// Sullo stesso computer: legge direttamente gli archivi. Se il servizio non è attivo,
 /// raccoglie anche i log, così la diretta funziona comunque.
-pub fn local(dir: &Path, source: Option<&str>, text: &str, history: usize) -> Result<()> {
-    for row in collector::search(dir, source, text, i64::MIN, i64::MAX, history)?
+pub fn local(dir: &Path, source: Option<&str>, query: &Query, history: usize) -> Result<()> {
+    for row in collector::search(dir, source, query, i64::MIN, i64::MAX, history)?
         .iter()
         .rev()
     {
         print(row);
     }
-    let (_, mut after) = collector::tail(dir, source, text, None)?;
+    let (_, mut after) = collector::tail(dir, source, query, None)?;
     eprintln!("— in diretta; Ctrl+C per uscire —");
     loop {
         // Fallisce in silenzio se un'altra istanza sta già raccogliendo: va bene così.
         if crate::util::Lock::acquire(&dir.join("service.lock")).is_ok() {
             let _ = collector::once(dir);
         }
-        let (rows, next) = collector::tail(dir, source, text, Some(&after))?;
+        let (rows, next) = collector::tail(dir, source, query, Some(&after))?;
         rows.iter().for_each(print);
         after = next;
         std::thread::sleep(Duration::from_secs(1));
@@ -40,7 +40,7 @@ pub fn local(dir: &Path, source: Option<&str>, text: &str, history: usize) -> Re
 }
 
 /// Da un altro computer: entra nella pagina web del server con nome e password.
-pub fn remote(server: &str, user: &str, source: Option<&str>, text: &str) -> Result<()> {
+pub fn remote(server: &str, user: &str, source: Option<&str>, query: &Query) -> Result<()> {
     let server = server.trim_end_matches('/');
     if !server.starts_with("http://") && !server.starts_with("https://") {
         bail!("Indica l'indirizzo completo, per esempio http://10.0.0.1:8790");
@@ -72,10 +72,17 @@ pub fn remote(server: &str, user: &str, source: Option<&str>, text: &str) -> Res
     let call = |body: Value| -> Result<Value> {
         read_json(post(&agent, &format!("{server}/api/tail"), &headers, body)?)
     };
-    let mut after = call(json!({"source": source, "text": text, "after": null}))?["after"].clone();
+    // Stessi filtri della ricerca, più la sorgente e il punto di ripartenza.
+    let request = |after: &Value| -> Result<Value> {
+        let mut body = serde_json::to_value(query)?;
+        body["source"] = json!(source);
+        body["after"] = after.clone();
+        call(body)
+    };
+    let mut after = request(&Value::Null)?["after"].clone();
     eprintln!("— collegato a {server}, in diretta; Ctrl+C per uscire —");
     loop {
-        let reply = call(json!({"source": source, "text": text, "after": after}))?;
+        let reply = request(&after)?;
         let rows: Vec<SearchRow> = serde_json::from_value(reply["rows"].clone())?;
         rows.iter().for_each(print);
         after = reply["after"].clone();

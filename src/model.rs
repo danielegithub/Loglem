@@ -16,6 +16,12 @@ pub struct Source {
     pub completed_dir: Option<PathBuf>,
     #[serde(default)]
     pub detached: bool,
+    /// Modalità prova: sigillo giornaliero con impronte concatenate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof: Option<crate::proof::Proof>,
+    /// Mascheramento degli IP e campi JSON da tenere.
+    #[serde(default, skip_serializing_if = "crate::privacy::Privacy::is_default")]
+    pub privacy: crate::privacy::Privacy,
     /// Archivia ed elimina i file ruotati (es. Caddy) dopo averli verificati.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub remove_rotated: bool,
@@ -115,6 +121,8 @@ impl Default for Source {
             completed_dir: None,
             detached: false,
             remove_rotated: false,
+            privacy: Default::default(),
+            proof: None,
             retention_days: 28,
             enabled: true,
             input: Input::Folder {
@@ -142,6 +150,14 @@ pub enum Input {
     },
     /// Journal di systemd, con filtri facoltativi.
     Journal(crate::sources::journal::Filter),
+    /// Container Docker: stessa lettura di Podman.
+    Docker {
+        container: String,
+        #[serde(default)]
+        context: Option<String>,
+    },
+    /// Kubernetes: un pod preciso oppure i pod con un'etichetta.
+    Kubernetes(crate::sources::kubernetes::Target),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +181,8 @@ pub struct Config {
     /// Accesso da altri computer: indirizzo e utenti.
     #[serde(default, skip_serializing_if = "crate::access::Access::is_default")]
     pub access: crate::access::Access,
+    #[serde(default, skip_serializing_if = "crate::alerts::Alerts::is_default")]
+    pub alerts: crate::alerts::Alerts,
 }
 
 impl Default for Config {
@@ -176,6 +194,7 @@ impl Default for Config {
             updates: None,
             web_port: None,
             access: Default::default(),
+            alerts: Default::default(),
         }
     }
 }
@@ -189,7 +208,6 @@ pub struct Entry {
     pub event_ns: i64,
     pub collected_ns: i64,
     pub timestamp_origin: &'static str,
-    pub raw: Vec<u8>,
     pub message: String,
 }
 
@@ -198,6 +216,26 @@ pub struct Cursor {
     pub offset: u64,
     pub generation: i64,
     pub anchor: String,
+    /// Catena di impronte di tutte le righe lette fino a `offset` (vuota = sconosciuta).
+    pub chain: String,
+    /// Quante righe sono state lette fino a `offset`.
+    pub lines: u64,
+}
+
+/// Un periodo in cui possono mancare righe (Loglem fermo, file ruotato, container
+/// rimosso…). Le date sono stime: indicano dove guardare, non un confine esatto.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Gap {
+    pub from_ns: i64,
+    pub to_ns: i64,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GapStatus {
+    pub from: String,
+    pub to: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,6 +257,10 @@ pub struct SourceStatus {
     pub completed_dir: Option<PathBuf>,
     pub remove_rotated: bool,
     pub warning: Option<String>,
+    /// Lacune riconosciute, dalla più recente.
+    pub gaps: Vec<GapStatus>,
+    /// Esito dell'ultima ripartenza dopo un fermo, se recente.
+    pub recovery: Option<String>,
     pub phase: String,
     pub error: Option<String>,
     pub source: String,

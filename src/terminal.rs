@@ -534,7 +534,7 @@ const MAIN_MENU: [&str; 9] = [
     "Cerca nei log",
     "Conservazione — per quanti giorni tenere i log",
     "Leggi i log adesso",
-    "Raccolta automatica (servizio Linux)",
+    "Raccolta automatica (servizio)",
     "Impostazioni",
     "Aggiornamenti",
     "Esci",
@@ -551,7 +551,19 @@ fn main_menu_help(has_sources: bool, dir: &Path) -> String {
          3. «Cerca nei log»: trova parole e date.\n\
          I file originali restano dove sono, salvo che tu attivi la loro pulizia."
     };
-    format!("{text}\nDati salvati in: {}", dir.display())
+    let mut help = format!("{text}\nDati salvati in: {}", dir.display());
+    if let Ok(problems) = crate::health::check(dir, crate::health::DEFAULT_MAX_MINUTES, true) {
+        for problem in problems.iter().take(3) {
+            help.push_str(&format!("\n⚠ {}", problem.text));
+        }
+        if problems.len() > 3 {
+            help.push_str(&format!(
+                "\n⚠ … e altri {} (loglem check)",
+                problems.len() - 3
+            ));
+        }
+    }
+    help
 }
 
 pub fn run(dir: &Path) -> Result<()> {
@@ -630,6 +642,7 @@ fn journal_filter() -> Result<Option<(Input, String, String)>> {
     let filter = crate::sources::journal::Filter {
         units: list(&units),
         identifiers: list(&identifiers),
+        matches: Vec::new(),
         priority: None,
     };
     filter.validate()?;
@@ -930,7 +943,11 @@ fn search(dir: &Path) -> Result<()> {
     let rows = collector::search(
         dir,
         source,
-        &text,
+        &crate::query::Query {
+            text,
+            ignore_case: true,
+            ..Default::default()
+        },
         if from.is_empty() {
             i64::MIN
         } else {
@@ -1277,16 +1294,16 @@ fn source_settings(dir: &Path) -> Result<()> {
 }
 
 fn service_menu(dir: &Path) -> Result<()> {
-    if !cfg!(target_os = "linux") {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return page(
             "Raccolta automatica",
-            "Il servizio automatico è disponibile per ora solo su Linux.\n\
+            "Il servizio automatico è disponibile su Linux e macOS.\n\
              Qui puoi usare «Leggi i log adesso», oppure tenere aperto\n\
              «loglem web» in un terminale: raccoglie i log e mostra la pagina.",
         );
     }
     let Some(choice) = choose(
-        "Raccolta automatica (servizio Linux)",
+        "Raccolta automatica (servizio)",
         &[
             "Installa e avvia il servizio (consigliato)",
             "Avvia",

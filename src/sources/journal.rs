@@ -17,6 +17,10 @@ pub struct Filter {
     /// Identificatori syslog, es. `sshd` o `sudo`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub identifiers: Vec<String>,
+    /// Campi del journal da confrontare, es. `CONTAINER_NAME=web` (un container Podman
+    /// seguito per nome: continua anche quando viene ricreato).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub matches: Vec<String>,
     /// Solo voci fino a questa gravità (0 = emergenza … 7 = debug).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<u8>,
@@ -26,6 +30,18 @@ impl Filter {
     pub fn validate(&self) -> Result<()> {
         if self.priority.is_some_and(|p| p > 7) {
             bail!("La gravità va da 0 (emergenza) a 7 (debug)");
+        }
+        for field in &self.matches {
+            let valid = field.split_once('=').is_some_and(|(name, value)| {
+                !name.is_empty()
+                    && !value.is_empty()
+                    && name
+                        .bytes()
+                        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+            });
+            if !valid {
+                bail!("Campo del journal non valido: {field:?} (formato NOME=valore)");
+            }
         }
         for name in self.units.iter().chain(&self.identifiers) {
             if name.is_empty() || name.starts_with('-') || name.chars().any(char::is_control) {
@@ -43,6 +59,9 @@ impl Filter {
         }
         if !self.identifiers.is_empty() {
             parts.push(format!("programmi {}", self.identifiers.join(", ")));
+        }
+        if !self.matches.is_empty() {
+            parts.push(self.matches.join(", "));
         }
         if let Some(p) = self.priority {
             parts.push(format!("gravità fino a {p}"));
@@ -64,6 +83,8 @@ impl Filter {
         if let Some(priority) = self.priority {
             command.arg(format!("--priority={priority}"));
         }
+        // Le corrispondenze NOME=valore vanno per ultime, come argomenti semplici.
+        command.args(&self.matches);
     }
 }
 
@@ -77,7 +98,6 @@ const CURSOR: &str = "journal_cursor";
 /// Istante (microsecondi) dell'ultima voce letta: da qui riparte la lettura.
 const SINCE: &str = "journal_since";
 pub const WARNING: &str = "journal_warning";
-const GAP: &str = "journal_gap";
 const GAP_CHECKED: &str = "journal_gap_checked";
 
 /// Servizi presenti nel journal, per proporli nella scelta guidata.
@@ -108,7 +128,10 @@ fn decode(line: &[u8], now: i64) -> Result<(String, Entry)> {
         .context("Voce del journal senza data")?
         .parse()
         .context("Data del journal non valida")?;
-    let text = message_text(value.get("MESSAGE"));
+    // I container scrivono la riga con il suo a capo finale: non fa parte del messaggio.
+    let text = message_text(value.get("MESSAGE"))
+        .trim_end_matches(['\r', '\n'])
+        .to_owned();
     let source = field("SYSLOG_IDENTIFIER")
         .or_else(|| field("_COMM"))
         .or_else(|| field("_SYSTEMD_UNIT"))
@@ -125,7 +148,6 @@ fn decode(line: &[u8], now: i64) -> Result<(String, Entry)> {
         event_ns: micros.saturating_mul(1000),
         collected_ns: now,
         timestamp_origin: "event",
-        raw: line.to_vec(),
         message,
     };
     Ok((cursor, entry))
@@ -153,21 +175,20 @@ pub fn collect(store: &mut Archive, filter: &Filter, now: i64, earliest: i64) ->
     // L'esito resta salvato fino al controllo successivo.
     let this_run = std::process::id().to_string();
     let checked = store.get_state(GAP_CHECKED)?.as_deref() == Some(this_run.as_str());
+    // Se non si vede tutto il journal, una voce che manca non è per forza stata eliminata.
+    let partial_view = sees_only_own_entries();
     if let (Some(cursor), false) = (&cursor, checked) {
-        let gap = if cursor_still_available(cursor, filter)? {
-            ""
-        } else {
-            "Il journal ha eliminato voci prima che Loglem le leggesse: \
-             nello storico può mancare un periodo"
-        };
-        store.set_state(GAP, gap)?;
+        if !partial_view && !cursor_still_available(cursor, filter)? {
+            let from = cursor_time(cursor).unwrap_or(0).saturating_mul(1000);
+            store.record_gap(
+                from,
+                now,
+                "Il journal ha eliminato voci prima che Loglem le leggesse",
+            )?;
+        }
         store.set_state(GAP_CHECKED, &this_run)?;
     }
-    let mut warnings: Vec<String> = store
-        .get_state(GAP)?
-        .into_iter()
-        .filter(|g| !g.is_empty())
-        .collect();
+    let mut warnings = Vec::new();
 
     // Si riparte dall'istante dell'ultima voce letta, non dal cursore: se il journal
     // ha eliminato quella voce, `--after-cursor` non restituirebbe più nulla.
@@ -207,7 +228,10 @@ pub fn collect(store: &mut Archive, filter: &Filter, now: i64, earliest: i64) ->
     })?;
     added += save(store, &mut batch, last.as_ref())?;
 
-    if diagnostic.contains("insufficient permissions") || diagnostic.contains("other users") {
+    if diagnostic.contains("insufficient permissions")
+        || diagnostic.contains("other users")
+        || partial_view
+    {
         warnings.push(
             "Loglem vede solo una parte del journal. Per leggerlo tutto, un amministratore \
              deve aggiungere l'utente al gruppo systemd-journal \
@@ -223,6 +247,26 @@ pub fn collect(store: &mut Archive, filter: &Filter, now: i64, earliest: i64) ->
         );
     }
     Ok(added)
+}
+
+/// Su Linux, chi non è root e non è in uno dei gruppi che leggono tutto il journal vede solo
+/// le proprie voci. `journalctl` lo dice solo a volte, quindi lo controlliamo noi.
+fn sees_only_own_entries() -> bool {
+    if !cfg!(target_os = "linux") {
+        return false;
+    }
+    let ask = |option: &str| {
+        process::output(Command::new("id").arg(option), Duration::from_secs(5))
+            .ok()
+            .map(|out| String::from_utf8_lossy(&out).trim().to_owned())
+    };
+    let (Some(uid), Some(groups)) = (ask("-u"), ask("-nG")) else {
+        return false;
+    };
+    uid != "0"
+        && !groups
+            .split_whitespace()
+            .any(|g| matches!(g, "systemd-journal" | "adm" | "wheel"))
 }
 
 /// Salva le voci, poi il punto di ripartenza: dopo un'interruzione si riparte da qui.

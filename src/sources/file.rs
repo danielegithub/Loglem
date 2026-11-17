@@ -28,7 +28,7 @@ pub fn identity(meta: &fs::Metadata) -> String {
     }
 }
 
-fn anchor(file: &mut File, offset: u64) -> Result<String> {
+pub fn anchor(file: &mut File, offset: u64) -> Result<String> {
     let size = offset.min(256);
     file.seek(SeekFrom::Start(offset - size))?;
     let mut bytes = vec![0; size as usize];
@@ -137,6 +137,7 @@ pub fn collect(store: &mut Archive, path: &Path, complete: bool, now: i64) -> Re
         let mut entries = Vec::with_capacity(BATCH_SIZE);
         let mut batch_bytes = 0;
         let mut next_offset = cursor.offset;
+        let (mut chain, mut lines) = (cursor.chain.clone(), cursor.lines);
         for _ in 0..BATCH_SIZE {
             let mut bytes = Vec::new();
             let count = reader
@@ -157,6 +158,8 @@ pub fn collect(store: &mut Archive, path: &Path, complete: bool, now: i64) -> Re
                 .trim_end_matches(['\r', '\n'])
                 .to_owned();
             let (event_ns, origin) = timestamps::event_time(&text, now);
+            chain = util::chain_next(&chain, &bytes);
+            lines += 1;
             entries.push(Entry {
                 key: format!("file:{id}:{}:{next_offset}", cursor.generation),
                 file_id: Some(id.clone()),
@@ -165,7 +168,6 @@ pub fn collect(store: &mut Archive, path: &Path, complete: bool, now: i64) -> Re
                 event_ns,
                 collected_ns: now,
                 timestamp_origin: origin,
-                raw: bytes,
                 message: text,
             });
             next_offset += count as u64;
@@ -180,19 +182,57 @@ pub fn collect(store: &mut Archive, path: &Path, complete: bool, now: i64) -> Re
         }
         cursor.offset = next_offset;
         cursor.anchor = anchor(&mut file, cursor.offset)?;
+        cursor.chain = chain;
+        cursor.lines = lines;
         added += store.save_file_batch(&id, &cursor, &entries)?;
     }
     if changed {
-        store.set_state(
-            "warning",
-            "File was truncated or rewritten; unread data removed by its producer may be missing",
+        // Le righe scritte dopo l'ultima lettura e prima del troncamento sono perse.
+        let last_read = store
+            .get_state("last_success")?
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(now);
+        store.record_gap(
+            last_read,
+            now,
+            &format!(
+                "{} è stato troncato o riscritto: le righe scritte dopo l'ultima lettura \
+                 e prima del troncamento possono mancare",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            ),
         )?;
     }
     Ok(added)
 }
 
+/// Catena di impronte, numero di righe e byte di un file, leggendolo tutto
+/// (anche l'ultima riga senza a capo).
+pub fn file_chain(path: &Path) -> Result<(String, u64, u64)> {
+    let mut reader = BufReader::new(File::open(path)?);
+    let (mut chain, mut lines, mut size) = (String::new(), 0u64, 0u64);
+    loop {
+        let mut line = Vec::new();
+        let count = reader
+            .by_ref()
+            .take((MAX_LINE_BYTES + 1) as u64)
+            .read_until(b'\n', &mut line)?;
+        if count == 0 {
+            return Ok((chain, lines, size));
+        }
+        if count > MAX_LINE_BYTES {
+            bail!("A line exceeds 1 MiB; source preserved");
+        }
+        chain = util::chain_next(&chain, &line);
+        lines += 1;
+        size += count as u64;
+    }
+}
+
 /// Explicit handoff only: the caller guarantees that the producer has closed this file.
 /// Normal collection NEVER deletes/truncates source files.
+///
+/// Prima di rimuovere l'originale controlla, byte per byte, che l'archivio lo contenga
+/// tutto e che il file non sia cambiato nel frattempo.
 pub fn archive_completed(
     store: &mut Archive,
     active: &Path,
@@ -208,11 +248,19 @@ pub fn archive_completed(
     if active == completed || active_meta.as_ref().is_some_and(|m| identity(m) == id) {
         bail!("Refusing cleanup of the active source file");
     }
-    let original_digest = util::file_digest(completed)?;
+    // Impronta dell'originale prima della lettura…
+    let (chain_before, lines_before, size_before) = file_chain(completed)?;
     let count = collect(store, completed, true, timestamps::now_ns())?;
+    // …e confronto con quella calcolata mentre si archiviava. Le righe scadute o mancanti
+    // dall'archivio fanno fallire il controllo: l'originale resta.
     let cursor = store.cursor(&id)?;
-    let archived_digest = store.archived_file_digest(&id, cursor.generation, before.len())?;
-    if original_digest != archived_digest || util::file_digest(completed)? != archived_digest {
+    let archived_ok = cursor.offset == size_before
+        && cursor.lines == lines_before
+        && cursor.chain == chain_before
+        && store.rows_of_file(&id, cursor.generation)? == lines_before;
+    // …e ancora dopo, per accorgersi di un file cambiato mentre lo si leggeva.
+    let unchanged = file_chain(completed)?.0 == chain_before;
+    if !archived_ok || !unchanged {
         bail!("File content changed or archive verification failed; original preserved");
     }
     let after = fs::symlink_metadata(completed)?;

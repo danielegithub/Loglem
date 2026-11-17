@@ -48,6 +48,13 @@ impl Worker {
                             "Arresto anomalo della raccolta. La traccia è in «Problemi»."
                         ))
                     });
+                // Stato per gli altri programmi e notifica se i problemi sono cambiati.
+                let problems =
+                    crate::health::check(&dir, crate::health::DEFAULT_MAX_MINUTES, false)
+                        .map(|p| crate::alerts::hide_acknowledged(&dir, p));
+                if let Err(error) = problems.and_then(|p| crate::alerts::after_cycle(&dir, p)) {
+                    crate::diagnostics::error("alerts", "after_cycle", None, &error);
+                }
                 let seconds = crate::config::load(&dir)
                     .map(|c| c.poll_seconds)
                     .unwrap_or(5);
@@ -82,6 +89,22 @@ impl Worker {
         mutex.lock().unwrap_or_else(|p| p.into_inner()).requested = true;
         wake.notify_one();
     }
+    /// Chiede un ultimo giro completo di lettura e lo aspetta, al massimo per `limit`.
+    /// Se un giro è già in corso, aspetta anche quello successivo: deve partire dopo la richiesta.
+    pub fn finish(&self, limit: Duration) -> bool {
+        let start = self.progress();
+        let target = start.generation + if start.running { 2 } else { 1 };
+        self.request();
+        let deadline = std::time::Instant::now() + limit;
+        while std::time::Instant::now() < deadline {
+            if self.progress().generation >= target {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        false
+    }
+
     pub fn progress(&self) -> Progress {
         self.state
             .0
