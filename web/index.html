@@ -89,20 +89,24 @@
               <input id="search-to" type="date" />
             </div>
             <span class="hint">Le date sono in UTC</span>
+            <div class="severity-filter" role="group" aria-label="Gravità da mostrare">
+              <span class="severity-title">Mostra</span>
+              <label class="level-check level-info">
+                <input type="checkbox" id="show-info" checked /> Info
+              </label>
+              <label class="level-check level-warning">
+                <input type="checkbox" id="show-warning" checked /> Avvisi
+              </label>
+              <label class="level-check level-error">
+                <input type="checkbox" id="show-error" checked /> Errori
+              </label>
+            </div>
             <details class="advanced-filters">
               <summary>Filtri avanzati</summary>
               <div class="filter-dates">
                 <label class="checkbox">
                   <input type="checkbox" id="search-ignore-case" checked /> Maiuscole indifferenti
                 </label>
-                <div class="field">
-                  <label for="search-level">Gravità</label>
-                  <select id="search-level">
-                    <option value="">Tutte</option>
-                    <option value="error">Solo errori</option>
-                    <option value="warning">Avvisi ed errori</option>
-                  </select>
-                </div>
                 <div class="field">
                   <label for="search-ip">Indirizzo IP</label>
                   <input id="search-ip" placeholder="es. 203.0.113.7" />
@@ -116,7 +120,7 @@
                   <input id="search-status" type="number" min="100" max="599" placeholder="es. 404" />
                 </div>
               </div>
-              <small>Gravità e codice si riconoscono dal testo della riga (JSON di Caddy, Nginx, Apache, journal).</small>
+              <small>Gravità e codice si riconoscono dal testo della riga (JSON di Caddy, Nginx, Apache, journal). Una riga senza «ERROR» o «WARN» conta come info.</small>
             </details>
             <label class="checkbox">
               <input type="checkbox" id="live" checked /> Diretta: le righe nuove compaiono in cima

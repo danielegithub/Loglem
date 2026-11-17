@@ -15,6 +15,37 @@ pub enum Level {
     Warning,
 }
 
+/// Gravità di una riga, riconosciuta dal testo. Ogni riga ha esattamente una gravità:
+/// quello che non è né errore né avviso è informazione.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Severity {
+    Info,
+    Warning,
+    Error,
+}
+
+impl Severity {
+    pub fn name(self) -> &'static str {
+        match self {
+            Severity::Info => "info",
+            Severity::Warning => "warning",
+            Severity::Error => "error",
+        }
+    }
+}
+
+/// La gravità di una riga, con le stesse regole dei filtri.
+pub fn severity(line: &str) -> Severity {
+    if ERROR_MARKS.iter().any(|m| line.contains(m)) {
+        Severity::Error
+    } else if WARNING_MARKS.iter().any(|m| line.contains(m)) {
+        Severity::Warning
+    } else {
+        Severity::Info
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, clap::Args)]
 pub struct Query {
     /// Testo da cercare (vuoto = tutto).
@@ -29,6 +60,10 @@ pub struct Query {
     #[arg(long, value_enum)]
     #[serde(default)]
     pub level: Option<Level>,
+    /// Solo le righe di queste gravità (vuoto o tutte e tre = non filtra). Lo usa la pagina web.
+    #[arg(skip)]
+    #[serde(default)]
+    pub only: Vec<Severity>,
     /// Solo righe che contengono questo indirizzo IP.
     #[arg(long)]
     #[serde(default)]
@@ -103,7 +138,18 @@ impl Query {
                 return false;
             }
         }
+        if self.filters_severity() && !self.only.contains(&severity(line)) {
+            return false;
+        }
         true
+    }
+
+    /// Il filtro per gravità toglie qualcosa solo se è scelto un sottoinsieme.
+    fn filters_severity(&self) -> bool {
+        let mut chosen = self.only.clone();
+        chosen.sort_by_key(|s| *s as u8);
+        chosen.dedup();
+        !chosen.is_empty() && chosen.len() < 3
     }
 
     pub fn text(text: &str) -> Self {
@@ -147,6 +193,26 @@ impl Query {
             let any = vec!["instr(message, ?) > 0"; marks.len()].join(" OR ");
             sql.push_str(&format!(" AND ({any})"));
             params.extend(marks.iter().map(|m| Value::Text((*m).to_owned())));
+        }
+        if self.filters_severity() {
+            let is_error = vec!["instr(message, ?) > 0"; ERROR_MARKS.len()].join(" OR ");
+            let is_warning = vec!["instr(message, ?) > 0"; WARNING_MARKS.len()].join(" OR ");
+            let mut parts = Vec::new();
+            if self.only.contains(&Severity::Error) {
+                parts.push(format!("({is_error})"));
+                params.extend(ERROR_MARKS.iter().map(|m| Value::Text((*m).to_owned())));
+            }
+            if self.only.contains(&Severity::Warning) {
+                parts.push(format!("(NOT ({is_error}) AND ({is_warning}))"));
+                params.extend(ERROR_MARKS.iter().map(|m| Value::Text((*m).to_owned())));
+                params.extend(WARNING_MARKS.iter().map(|m| Value::Text((*m).to_owned())));
+            }
+            if self.only.contains(&Severity::Info) {
+                parts.push(format!("(NOT ({is_error}) AND NOT ({is_warning}))"));
+                params.extend(ERROR_MARKS.iter().map(|m| Value::Text((*m).to_owned())));
+                params.extend(WARNING_MARKS.iter().map(|m| Value::Text((*m).to_owned())));
+            }
+            sql.push_str(&format!(" AND ({})", parts.join(" OR ")));
         }
         (sql, params)
     }

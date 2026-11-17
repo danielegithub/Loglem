@@ -1130,3 +1130,88 @@ button.danger {
 #privacy-result {
   margin-top: 18px;
 }
+
+/* Gravità delle righe: verde info, arancione avvisi, rosso errori. */
+:root {
+  --level-info: #1f8a4c;
+  --level-info-bg: #eef8f1;
+  --level-warning: #c76a00;
+  --level-warning-bg: #fff4e5;
+  --level-error: #c62828;
+  --level-error-bg: #fdecec;
+}
+
+.log-row {
+  border-left: 4px solid transparent;
+}
+
+.log-row.level-info {
+  border-left-color: var(--level-info);
+}
+
+.log-row.level-warning {
+  border-left-color: var(--level-warning);
+  background: var(--level-warning-bg);
+}
+
+.log-row.level-error {
+  border-left-color: var(--level-error);
+  background: var(--level-error-bg);
+}
+
+.log-level {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.level-info .log-level {
+  color: var(--level-info);
+}
+
+.level-warning .log-level {
+  color: var(--level-warning);
+}
+
+.level-error .log-level {
+  color: var(--level-error);
+}
+
+.severity-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  margin: 10px 0;
+}
+
+.severity-title {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.level-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.level-check.level-info {
+  color: var(--level-info);
+}
+
+.level-check.level-warning {
+  color: var(--level-warning);
+}
+
+.level-check.level-error {
+  color: var(--level-error);
+}
+
+.level-check input {
+  accent-color: currentColor;
+}

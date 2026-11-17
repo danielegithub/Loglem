@@ -362,6 +362,24 @@ function renderLogStatus() {
   }
 }
 
+// Il colore da solo non basta a chi non lo distingue: ogni riga porta anche la parola.
+const LEVEL_LABELS = { info: 'INFO', warning: 'AVVISO', error: 'ERRORE' };
+const LEVEL_CHECKS = ['info', 'warning', 'error'];
+
+// Le gravità da mostrare: vuoto = tutte (nessun filtro).
+function chosenLevels() {
+  const chosen = LEVEL_CHECKS.filter((name) => $('show-' + name).checked);
+  return chosen.length === LEVEL_CHECKS.length ? [] : chosen;
+}
+
+for (const name of LEVEL_CHECKS) {
+  $('show-' + name).addEventListener('change', () => {
+    // Almeno una deve restare scelta: senza nessuna non ci sarebbe niente da vedere.
+    if (LEVEL_CHECKS.every((n) => !$('show-' + n).checked)) $('show-' + name).checked = true;
+    search();
+  });
+}
+
 function renderLogRow(row, query) {
   const line = element('div', undefined, 'log-row');
   const stamp = element('div', formatDate(row.timestamp), 'log-date');
@@ -370,6 +388,9 @@ function renderLogRow(row, query) {
   }
   const message = element('pre', undefined, 'log-text');
   highlight(message, row.message, query);
+  const level = LEVEL_LABELS[row.level] ? row.level : 'info';
+  line.classList.add('level-' + level);
+  stamp.append(element('span', LEVEL_LABELS[level], 'log-level'));
   line.append(stamp, element('div', row.source, 'log-source'), message);
   return line;
 }
@@ -475,7 +496,7 @@ function currentQuery() {
     source: $('search-source').value,
     text: $('search-text').value,
     ignore_case: $('search-ignore-case').checked,
-    level: $('search-level').value || null,
+    only: chosenLevels(),
     ip: $('search-ip').value.trim() || null,
     path: $('search-path').value.trim() || null,
     status: status ? Number(status) : null,
@@ -483,7 +504,8 @@ function currentQuery() {
 }
 
 function clearSearch() {
-  for (const id of ['search-ip', 'search-path', 'search-status', 'search-level']) $(id).value = '';
+  for (const id of ['search-ip', 'search-path', 'search-status']) $(id).value = '';
+  for (const name of LEVEL_CHECKS) $('show-' + name).checked = true;
   $('search-text').value = '';
   $('search-from').value = '';
   $('search-to').value = '';

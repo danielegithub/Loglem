@@ -243,6 +243,9 @@ pub struct SearchRow {
     pub source: String,
     pub timestamp: String,
     pub timestamp_origin: String,
+    /// «info», «warning» o «error», riconosciuta dal testo.
+    #[serde(default)]
+    pub level: String,
     pub message: String,
 }
 

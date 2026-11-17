@@ -291,11 +291,13 @@ impl Archive {
         values.push(Value::Integer(limit.min(1000) as i64));
         let result = stmt
             .query_map(rusqlite::params_from_iter(values), |row| {
+                let message: String = row.get(2)?;
                 Ok(SearchRow {
                     source: source.into(),
                     timestamp: format_ns(row.get(0)?),
                     timestamp_origin: row.get(1)?,
-                    message: row.get(2)?,
+                    level: crate::query::severity(&message).name().to_owned(),
+                    message,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -362,11 +364,13 @@ impl Archive {
         let mut found = stmt.query(rusqlite::params_from_iter(values))?;
         while let Some(row) = found.next()? {
             next = row.get(0)?;
+            let message: String = row.get(3)?;
             rows.push(SearchRow {
                 source: source.into(),
                 timestamp: format_ns(row.get(1)?),
                 timestamp_origin: row.get(2)?,
-                message: row.get(3)?,
+                level: crate::query::severity(&message).name().to_owned(),
+                message,
             });
         }
         // Se il limite ha tagliato le righe, la prossima volta si riparte dall'ultima data.
