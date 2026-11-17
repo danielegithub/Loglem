@@ -138,10 +138,7 @@ impl Query {
                 return false;
             }
         }
-        if self.filters_severity() && !self.only.contains(&severity(line)) {
-            return false;
-        }
-        true
+        !self.filters_severity() || self.only.contains(&severity(line))
     }
 
     /// Il filtro per gravità toglie qualcosa solo se è scelto un sottoinsieme.
@@ -215,5 +212,144 @@ impl Query {
             sql.push_str(&format!(" AND ({})", parts.join(" OR ")));
         }
         (sql, params)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LINES: &[&str] = &[
+        "2026-11-17T10:00:01Z INFO login ok user=demo ip=203.0.113.4",
+        "2026-11-17T10:00:02Z WARN login failed user=root ip=203.0.113.9",
+        "2026-11-17T10:00:03Z ERROR unexpected failure in /boom",
+        "{\"level\":\"error\",\"status\":500,\"request\":{\"uri\":\"/boom\"}}",
+        "{\"level\":\"info\",\"status\":404,\"request\":{\"uri\":\"/admin\"}}",
+        "203.0.113.4 - - [17/Nov/2026:10:00:00 +0000] \"GET /login HTTP/1.1\" 200 5 \"-\" \"x\"",
+        "Login OK per Anna",
+    ];
+
+    /// Le righe che la ricerca SQL trova.
+    fn sql_rows(query: &Query) -> Vec<String> {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute(
+            "CREATE TABLE entries(id INTEGER PRIMARY KEY, message TEXT)",
+            [],
+        )
+        .unwrap();
+        for line in LINES {
+            db.execute("INSERT INTO entries(message) VALUES(?1)", [line])
+                .unwrap();
+        }
+        let (filters, values) = query.sql();
+        let mut stmt = db
+            .prepare(&format!(
+                "SELECT message FROM entries WHERE 1 = 1{filters} ORDER BY id"
+            ))
+            .unwrap();
+        stmt.query_map(rusqlite::params_from_iter(values), |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    /// SQL (archivio) e `matches` (file originali) devono scegliere le stesse righe:
+    /// la cancellazione dagli originali si basa su questo.
+    fn same(query: Query) -> Vec<String> {
+        let by_sql = sql_rows(&query);
+        let by_match: Vec<String> = LINES
+            .iter()
+            .filter(|l| query.matches(l))
+            .map(|l| l.to_string())
+            .collect();
+        assert_eq!(by_sql, by_match, "{query:?}");
+        by_sql
+    }
+
+    #[test]
+    fn sql_and_matches_agree() {
+        assert_eq!(same(Query::default()).len(), LINES.len());
+        assert_eq!(same(Query::text("login")).len(), 3);
+        let mut q = Query::text("login");
+        q.ignore_case = true;
+        assert_eq!(same(q).len(), 4);
+        assert_eq!(
+            same(Query {
+                ip: Some("203.0.113.4".into()),
+                ..Query::default()
+            })
+            .len(),
+            2
+        );
+        assert_eq!(
+            same(Query {
+                status: Some(404),
+                ..Query::default()
+            })
+            .len(),
+            1
+        );
+        assert_eq!(
+            same(Query {
+                status: Some(200),
+                ..Query::default()
+            })
+            .len(),
+            1
+        );
+        assert_eq!(
+            same(Query {
+                path: Some("/boom".into()),
+                ..Query::default()
+            })
+            .len(),
+            2
+        );
+        assert_eq!(
+            same(Query {
+                level: Some(Level::Error),
+                ..Query::default()
+            })
+            .len(),
+            2
+        );
+        assert_eq!(
+            same(Query {
+                level: Some(Level::Warning),
+                ..Query::default()
+            })
+            .len(),
+            3
+        );
+    }
+
+    #[test]
+    fn every_line_has_one_severity() {
+        let counts = |s: Severity| LINES.iter().filter(|l| severity(l) == s).count();
+        assert_eq!(counts(Severity::Error), 2);
+        assert_eq!(counts(Severity::Warning), 1);
+        assert_eq!(counts(Severity::Info), 4);
+    }
+
+    #[test]
+    fn severity_checkboxes() {
+        let only = |levels: &[Severity]| Query {
+            only: levels.to_vec(),
+            ..Query::default()
+        };
+        assert_eq!(same(only(&[Severity::Error])).len(), 2);
+        assert_eq!(same(only(&[Severity::Warning])).len(), 1);
+        assert_eq!(same(only(&[Severity::Info])).len(), 4);
+        assert_eq!(same(only(&[Severity::Info, Severity::Error])).len(), 6);
+        // Tutte e tre, o nessuna: non filtra.
+        assert_eq!(
+            same(only(&[Severity::Info, Severity::Warning, Severity::Error])).len(),
+            7
+        );
+        assert_eq!(same(only(&[])).len(), 7);
+        // Insieme ad altri filtri.
+        let mut q = only(&[Severity::Warning]);
+        q.text = "login".into();
+        assert_eq!(same(q).len(), 1);
     }
 }

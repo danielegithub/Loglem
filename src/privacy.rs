@@ -217,3 +217,36 @@ pub fn report(dir: &std::path::Path) -> Result<String> {
     );
     Ok(lines.join("\n"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn masks_ipv4_ipv6_and_ports() {
+        assert_eq!(mask_ips("from 203.0.113.7 ok"), "from 203.0.113.0 ok");
+        assert_eq!(
+            mask_ips("peer 198.51.100.4:51820."),
+            "peer 198.51.100.0:51820."
+        );
+        assert_eq!(
+            mask_ips("{\"ip\":\"2001:db8:85a3::8a2e:370:7334\"}"),
+            "{\"ip\":\"2001:db8:85a3::\"}"
+        );
+    }
+
+    #[test]
+    fn leaves_other_text_alone() {
+        let line = "2026-11-17T15:31:14.049Z version 1.2.3 took 15:31 id cafe";
+        assert_eq!(mask_ips(line), line);
+    }
+
+    #[test]
+    fn keeps_only_chosen_json_fields() {
+        let line =
+            r#"{"status":404,"request":{"uri":"/x","client_ip":"203.0.113.7"},"user_agent":"x"}"#;
+        let kept = keep_json_fields(line, &["status".into(), "request.uri".into()]).unwrap();
+        assert_eq!(kept, r#"{"request":{"uri":"/x"},"status":404}"#);
+        assert_eq!(keep_json_fields("not json", &["status".into()]), None);
+    }
+}

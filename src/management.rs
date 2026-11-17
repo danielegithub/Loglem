@@ -57,7 +57,8 @@ pub fn remove(dir: &Path, name: &str) -> Result<()> {
     ];
     files.retain(|f| f.exists());
     for file in files {
-        fs::remove_file(&file).with_context(|| format!("Non riesco a eliminare {}", file.display()))?;
+        fs::remove_file(&file)
+            .with_context(|| format!("Non riesco a eliminare {}", file.display()))?;
     }
     config::edit(dir, |config| {
         config.sources.retain(|s| s.id != name);
