@@ -1,0 +1,7 @@
+target
+data
+.git
+.github
+docs
+implementation_plan.md
+*.md
