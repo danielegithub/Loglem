@@ -1,21 +1,47 @@
-# Command reference
+# Commands
 
-Run `loglem --help` or `loglem COMMAND --help` for the options accepted by the installed version. With no command, Loglem opens the keyboard-driven terminal interface; `loglem tui` does the same explicitly. The main command groups are:
+`loglem COMMAND --help` shows every option. Without a command, Loglem opens the terminal menu. Put `--data-dir /absolute/path` before the command to use another data folder (or set `LOGLEM_DATA_DIR`).
 
-| Command | Purpose |
+## Sources and reading
+
+| Command | What it does |
 |---|---|
-| `init` | Create an empty configuration. |
-| `source list` | List configured sources. Use `source add-folder`, `add-file`, `add-podman`, or `add-caddy` (Caddy log with rotated-file cleanup) to add one. |
-| `podman-list` | Discover containers and pods; optionally select a named connection with `--connection`. |
-| `status [--json]` | Show archive locations, sizes, dates, and collection status. |
-| `collect` / `serve` | Collect once, or run the service (collection plus web page at a fixed address) until shutdown. `web` does the same, or prints the address if the service is already running. |
-| `search [options]` | Search archived text and date ranges; `--json` returns machine-readable output. |
-| `prune [--apply]` | Preview expired entries, or delete them from archives with `--apply`. |
-| `config export FILE` / `config import FILE` | Export or import source configuration. |
-| `config poll SECONDS` | Set the automatic collection interval. |
-| `config web-port PORT` | Choose the fixed local port of the web page (from the next start). |
-| `service install [--start]` | Register a systemd user service; `start`, `stop`, and `status` manage it. |
-| `diagnostics` | Print persisted Loglem errors and stack traces. |
-| `self-check` | Check the executable and embedded SQLite schema without changing user data. |
+| `source add-folder / add-file / add-caddy / add-podman / add-docker / add-kubernetes / add-journal` | Add a source. |
+| `source list`, `source set NAME --days N` | List sources, change the duration. |
+| `source configure NAME …` | Name, folder for finished files, rotated-file cleanup, path. |
+| `discover` | Find Caddy, Nginx and Apache logs. |
+| `podman-list`, `docker-list`, `kubernetes-list` | List containers or pods. |
+| `collect` | Read once. |
+| `serve` / `web` | Read all the time and serve the web page. |
+| `status [--json]` | Locations, sizes, dates, state, gaps. |
+| `check [--minutes N]` | Exit code 1 if Loglem is off, a source is not read, or an alert fires. |
 
-Pass `--data-dir /absolute/path` before the command to select a data directory. `LOGLEM_DATA_DIR` provides the same setting for automation. Commands to manage sources and updates are described in [usage.md](usage.md).
+## Find and follow
+
+| Command | What it does |
+|---|---|
+| `search` | `--text --ignore-case --level error --ip --path --status --from --to --source --limit --json` |
+| `tail` | Same filters, live. `--server URL --user NAME` follows a remote Loglem. |
+| `stats SOURCE [--days N] [--json]` | Requests per day, pages, status codes, IPs, slow pages. |
+
+## Look after the data
+
+| Command | What it does |
+|---|---|
+| `alerts list / add-pattern / add-size / add-free-space / remove / command / seen` | Alert rules and notification. |
+| `backup DIR`, `backup-verify DIR`, `restore DIR [--replace]` | Copy, check and restore data. |
+| `proof enable / disable / verify` | Proof mode: seal each day. |
+| `privacy set SOURCE …`, `privacy report` | Mask IPs, keep JSON fields, list what is kept. |
+| `erase … [--originals]`, `export …`, `audit [--days N]` | GDPR: erase (also from original files) or export one person's lines, see who looked. Also in the page **Personal data**. |
+| `prune [--apply]` | Show or delete expired lines. |
+| `archive-completed` | Archive and check one finished file by hand. |
+
+## Run and maintain
+
+| Command | What it does |
+|---|---|
+| `service install [--start] / start / stop / status` | Service: systemd on Linux, launchd on macOS. |
+| `access user-add / user-remove / user-list / address / proxy` | Other computers: users, address, reverse proxy. |
+| `config export / import / poll / web-port` | Settings. |
+| `update check / install / status / configure` | Signed updates (Linux). |
+| `diagnostics`, `self-check`, `init` | Loglem's own errors, a quick test, an empty configuration. |

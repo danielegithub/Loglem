@@ -2,16 +2,17 @@
 
 [English](README.md) | [Italiano](README.it.md) | [Français](README.fr.md) | [Español](README.es.md) | [Português](README.pt.md) | [Deutsch](README.de.md)
 
-**Un solo lugar para los registros de tu servidor: dónde están, cuánto espacio ocupan y cuánto tiempo se conservan.**
+**Un solo lugar para los registros de tu servidor: dónde están, cuánto ocupan y cuánto tiempo se guardan.**
 
-Loglem lee los registros de tu servidor Linux (archivos `.log` y contenedores Podman), los copia en un archivo de registros consultable y borra automáticamente las entradas archivadas cuando vence el periodo de conservación que elegiste. Lo gestionas todo desde una página web accesible en el propio servidor o desde un menú del terminal que se maneja con el teclado, sin editar archivos de configuración.
+Loglem lee tus registros, los copia en un archivo donde se puede buscar y borra las copias cuando pasa el tiempo que elegiste. Usas una página web o un menú en el terminal. Sin archivos de configuración.
 
-> **Estado: experimental.** Funciona y está probado, pero todavía no hay una versión publicada y algunas partes aún necesitan una verificación completa en un servidor real. Consulta los [límites](docs/es/limitations.md).
+> **Estado: experimental.** Funciona y está probado en macOS. Todavía no hay una versión publicada, y algunas partes no están probadas en un Linux real. Consulta los [límites](docs/es/limitations.md).
 
 ## Contenido
 
 - [Por qué Loglem](#por-qué-loglem)
-- [Qué hace](#qué-hace)
+- [Qué lee](#qué-lee)
+- [Limpieza segura de los archivos originales](#limpieza-segura-de-los-archivos-originales)
 - [Inicio rápido](#inicio-rápido)
 - [Instalación](#instalación)
 - [Documentación](#documentación)
@@ -19,69 +20,71 @@ Loglem lee los registros de tu servidor Linux (archivos `.log` y contenedores Po
 
 ## Por qué Loglem
 
-Los registros se acumulan en muchos sitios: una carpeta para el servidor web, otra para la aplicación, la salida de cada contenedor. Nadie recuerda dónde están, cuánto han crecido ni cuándo habría que borrarlos.
+Los registros se acumulan en muchos sitios. Nadie recuerda dónde están, cuánto pesan ni cuándo borrarlos.
 
-Con Loglem:
+- **Lo ves todo.** Una lista: cada fuente, dónde está, su tamaño, su estado.
+- **Eliges cuánto tiempo.** 28 días, 6 meses, 2 años, por fuente. Las copias viejas desaparecen solas.
+- **Puedes buscar.** Texto, fechas, IP, ruta, código de respuesta. También después de rotar el archivo o quitar el contenedor. Las líneas nuevas aparecen en directo.
+- **Es pequeño.** Un programa de unos 5 MB. Unos 10 MB de RAM. Sin servidor de base de datos, sin cuenta, sin nube. Tus registros se quedan en tu máquina.
+- **Es seguro por defecto.** Los archivos originales solo se leen. Borrarlos es opcional y está controlado (mira abajo).
+- **Es sencillo.** Una página web, un menú de terminal que funciona por SSH y comandos para scripts.
+- **Te dice qué falla.** Una fuente parada, un hueco en los registros, un disco lleno: lo ves, y `loglem check` avisa a tu monitor.
+- **Ayuda con los datos personales.** Enmascara IP, borra o exporta las líneas de una persona, mira quién consultó los registros. Consulta [privacidad](docs/es/privacy.md).
 
-- **Siempre sabes dónde están los registros.** Una lista muestra cada fuente, su ubicación original, la ubicación del archivo de registros, el tamaño y el estado de la última lectura.
-- **Tú decides cuánto tiempo se guardan los registros de cada fuente.** 28 días, 6 meses o 2 años, fuente por fuente. Las entradas caducadas se eliminan por ti: el disco no se llena y los datos viejos no se quedan por descuido.
-- **Puedes buscar.** Texto e intervalos de fechas en todo lo recopilado, incluso tras la rotación del archivo original o la eliminación del contenedor.
-- **No molesta.** Un único ejecutable de unos 4 MB, unos 10 MB de RAM en reposo, sin servidor de base de datos, sin cuenta y sin servicio en la nube. Tus registros nunca salen de la máquina.
-- **Es seguro por defecto.** Los archivos originales solo se leen, nunca se modifican. Borrar un original es opcional y solo se aplica a los archivos que entregas explícitamente una vez finalizada su escritura.
-- **Es sencillo de usar.** Todo se hace desde una página que solo escucha en el propio servidor, o desde un menú de terminal que funciona también por SSH. También hay comandos para scripts y automatización.
-- **Sustituye un montón de scripts.** Recoger, limpiar, conservar y buscar registros suele exigir una mezcla de reglas de rotación, tareas programadas y comandos improvisados. Loglem lo hace todo en un solo lugar, con los mismos ajustes en la página web, el terminal y la línea de comandos.
-- **Va contigo.** Rutas, contenedores y duraciones son ajustes, no código: exporta la configuración e impórtala en otra máquina.
+## Qué lee
 
-## Qué hace
+| Fuente | Notas |
+|---|---|
+| Carpetas y archivos de texto `.log` | También archivos rotados, también `.gz` (el historial se importa una vez, nunca duplicado). |
+| Caddy, Nginx, Apache | Se encuentran solos en su configuración. |
+| Podman, Docker | Un contenedor, o por nombre mediante el journal. |
+| Kubernetes | Un pod, o todos los pods de una aplicación. |
+| Journal de Linux | Todo, o algunos servicios, programas o niveles de gravedad. |
 
-1. **Añades una fuente:** una carpeta de archivos `.log`, un archivo suelto, un contenedor Podman o el registro de acceso de Caddy.
-2. **Loglem recoge las líneas nuevas** cada 10 segundos por defecto y las guarda en una pequeña base de datos SQLite para esa fuente. Recuerda dónde se quedó, así que nada se lee dos veces.
-3. **Buscas y compruebas** desde la página web o el terminal, y ves el estado de cada fuente.
-4. **Las entradas antiguas se eliminan** cuando superan la duración que fijaste para esa fuente.
-5. **Si algo falla,** los errores de Loglem se guardan con su causa y se ven en una página de Diagnóstico. Una fuente que falla no detiene a las demás.
+## Limpieza segura de los archivos originales
 
-Funciona como servicio en segundo plano (un servicio de usuario de systemd) o bajo demanda. Se ejecuta en Linux, sin escritorio gráfico.
+Desactivada por defecto. Si la activas para una fuente, Loglem borra un archivo terminado solo después de esta comprobación:
+
+1. **Copia** el archivo en su archivo.
+2. **Compara la copia con el original, byte a byte.** Si falta una línea, caducó o cambió, se detiene.
+3. Espera a que nadie haya modificado el archivo durante **24 horas**.
+4. Solo entonces borra el original.
+
+El archivo en el que un programa todavía escribe nunca se toca. Si falla un paso, el original se queda donde está. Vale para Caddy (archivos rotados) y para carpetas de archivos terminados.
 
 ## Inicio rápido
 
 Después de la [instalación](#instalación):
 
 ```sh
-# Abre el menú guiado del terminal (flechas, Intro, Esc)
-loglem
-
-# O añade una carpeta de registros desde la línea de comandos y léela una vez
-loglem source add-folder --name web-logs --path /srv/example/logs --days 28
+loglem                                  # menú en el terminal
+loglem discover                         # busca los registros de Caddy, Nginx y Apache
+loglem source add-folder --name web --path /srv/example/logs --days 28
 loglem collect
-loglem status
-
-# Buscar
-loglem search --source web-logs --text '/login' --from 2026-11-01 --to 2026-11-16
-
-# Abre la página web (imprime su propia dirección, por ejemplo http://127.0.0.1:53142)
-loglem web
+loglem search --source web --text '/login' --from 2026-11-01
+loglem web                              # lee y abre la página web (muestra la dirección)
 ```
 
-Para seguir recogiendo registros después de cerrar el terminal:
+Para seguir tras cerrar el terminal (Linux: systemd, macOS: launchd):
 
 ```sh
 loglem service install --start
 ```
 
-El menú del terminal y la página web usan por ahora etiquetas en italiano. Detalles en [Usar Loglem](docs/es/usage.md).
+El menú y la página web están en italiano. Más en [Usar Loglem](docs/es/usage.md).
 
 ## Instalación
 
-Cuando se publique una versión, descarga el paquete para tu máquina desde la pestaña **Releases** de este repositorio:
+Cuando haya una versión publicada, descarga el paquete para tu máquina en la pestaña **Releases**:
 
-| Máquina | Sufijo del paquete |
+| Máquina | Final del nombre del paquete |
 |---|---|
-| Linux Intel/AMD de 64 bits | `x86_64-unknown-linux-gnu.tar.gz` |
+| Linux Intel/AMD 64 bits | `x86_64-unknown-linux-gnu.tar.gz` |
 | Linux ARM64 | `aarch64-unknown-linux-gnu.tar.gz` |
 
 Los paquetes necesitan glibc 2.39 o posterior (por ejemplo Ubuntu 24.04).
 
-Antes de instalar, comprueba la firma con la clave pública del editor (`release-public.pem`), obtenida por un canal independiente:
+Comprueba la firma con la clave pública del editor (`release-public.pem`), obtenida por un canal independiente:
 
 ```sh
 openssl pkeyutl -verify -pubin -inkey release-public.pem -rawin -in SHA256SUMS -sigfile SHA256SUMS.sig
@@ -97,19 +100,21 @@ sh install.sh
 ~/Loglem/loglem
 ```
 
-Todo se guarda en `~/Loglem`: el programa y una carpeta `data/` con ajustes, registros archivados y diagnósticos. El instalador no activa ningún servicio por sí solo. Para las fuentes Podman, Podman debe estar instalado y ser accesible para el mismo usuario que ejecuta Loglem.
+Todo está en `~/Loglem`: el programa y una carpeta `data/`. El instalador no inicia ningún servicio. Para compilarlo tú mismo, consulta [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Para compilarlo tú mismo, consulta [CONTRIBUTING.md](CONTRIBUTING.md).
+**En un contenedor.** Constrúyelo con `podman build -t loglem -f Containerfile .` y ejecútalo montando una carpeta de registros. Consulta [Usar Loglem](docs/es/usage.md#11-en-un-contenedor).
 
 ## Documentación
 
-La documentación está disponible en: [English](docs/usage.md) | [Italiano](docs/it/usage.md) | [Français](docs/fr/usage.md) | [Español](docs/es/usage.md) | [Português](docs/pt/usage.md) | [Deutsch](docs/de/usage.md)
+[English](docs/usage.md) | [Italiano](docs/it/usage.md) | [Français](docs/fr/usage.md) | [Español](docs/es/usage.md) | [Português](docs/pt/usage.md) | [Deutsch](docs/de/usage.md)
 
-| Página | Contenido |
+| Página | Qué contiene |
 |---|---|
-| [Usar Loglem](docs/es/usage.md) | Guía paso a paso: añadir fuentes, búsqueda, conservación, ejecución como servicio, limpieza, traslado a otra máquina, solución de problemas y actualizaciones |
-| [Referencia de comandos](docs/es/cli.md) | Todos los comandos |
-| [Límites](docs/es/limitations.md) | Lo que no hace o no garantiza |
+| [Usar Loglem](docs/es/usage.md) | Pocos pasos para todo |
+| [Comandos](docs/es/cli.md) | Todos los comandos |
+| [Datos personales y modo prueba](docs/es/privacy.md) | Herramientas RGPD, borrado, exportación, registro de accesos, días sellados |
+| [Si Loglem se detiene](docs/es/stopping.md) | Qué pierdes y qué hace Loglem |
+| [Límites](docs/es/limitations.md) | Lo que no hace o no promete |
 
 ## Licencia
 

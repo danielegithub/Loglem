@@ -1,21 +1,47 @@
-# Référence des commandes
+# Commandes
 
-Lancez `loglem --help` ou `loglem COMMANDE --help` pour voir les options de la version installée. Sans commande, Loglem ouvre le menu au clavier dans le terminal ; `loglem tui` fait la même chose explicitement.
+`loglem COMMANDE --help` montre toutes les options. Sans commande, Loglem ouvre le menu du terminal. Mettez `--data-dir /chemin/absolu` avant la commande pour utiliser un autre dossier de données (ou définissez `LOGLEM_DATA_DIR`).
 
-| Commande | À quoi ça sert |
+## Sources et lecture
+
+| Commande | Ce qu'elle fait |
 |---|---|
-| `init` | Crée une configuration vide. |
-| `source list` | Liste les sources. Pour en ajouter une : `source add-folder`, `add-file`, `add-podman` ou `add-caddy` (journal de Caddy avec nettoyage des fichiers issus de la rotation). |
-| `podman-list` | Trouve les conteneurs et pods ; `--connection` choisit une connexion nommée. |
-| `status [--json]` | Montre l'emplacement des archives, les tailles, les dates et l'état de la collecte. |
-| `collect` / `serve` | Collecte une fois, ou fait tourner le service (collecte plus page web à adresse fixe) jusqu'à l'arrêt. `web` fait la même chose, ou affiche l'adresse si le service est déjà actif. |
-| `search [...]` | Cherche du texte et des plages de dates dans les archives ; `--json` donne une sortie exploitable par d'autres programmes. |
-| `prune [--apply]` | Montre les entrées expirées, ou avec `--apply` les supprime des archives. |
-| `config export FILE` / `config import FILE` | Exporte ou importe la configuration des sources. |
-| `config poll N` | Règle l'intervalle de collecte automatique (en secondes). |
-| `config web-port N` | Choisit le port local fixe de la page web (au prochain démarrage). |
-| `service install [--start]` | Enregistre un service utilisateur systemd ; `start`, `stop` et `status` le gèrent. |
-| `diagnostics` | Affiche les erreurs de Loglem enregistrées, avec leurs traces de pile d'appels. |
-| `self-check` | Vérifie l'exécutable et le schéma SQLite intégré sans toucher aux données. |
+| `source add-folder / add-file / add-caddy / add-podman / add-docker / add-kubernetes / add-journal` | Ajoute une source. |
+| `source list`, `source set NOM --days N` | Liste les sources, change la durée. |
+| `source configure NOM …` | Nom, dossier des fichiers terminés, nettoyage des fichiers tournés, chemin. |
+| `discover` | Cherche les journaux de Caddy, Nginx et Apache. |
+| `podman-list`, `docker-list`, `kubernetes-list` | Liste les conteneurs ou les pods. |
+| `collect` | Lit une fois. |
+| `serve` / `web` | Lit en permanence et sert la page web. |
+| `status [--json]` | Emplacements, tailles, dates, état, trous. |
+| `check [--minutes N]` | Code de sortie 1 si Loglem est éteint, si une source n'est pas lue ou si une alerte se déclenche. |
 
-Passez `--data-dir /chemin/absolu` avant la commande pour choisir le dossier de données ; `LOGLEM_DATA_DIR` fait la même chose pour l'automatisation. Les commandes pour gérer les sources et les mises à jour sont décrites dans [usage.md](usage.md).
+## Chercher et suivre
+
+| Commande | Ce qu'elle fait |
+|---|---|
+| `search` | `--text --ignore-case --level error --ip --path --status --from --to --source --limit --json` |
+| `tail` | Mêmes filtres, en direct. `--server URL --user NOM` suit un Loglem distant. |
+| `stats SOURCE [--days N] [--json]` | Requêtes par jour, pages, codes, IP, pages lentes. |
+
+## Soigner les données
+
+| Commande | Ce qu'elle fait |
+|---|---|
+| `alerts list / add-pattern / add-size / add-free-space / remove / command / seen` | Règles d'alerte et notification. |
+| `backup DIR`, `backup-verify DIR`, `restore DIR [--replace]` | Copie, contrôle et restaure les données. |
+| `proof enable / disable / verify` | Mode preuve : scelle chaque jour. |
+| `privacy set SOURCE …`, `privacy report` | Masque les IP, garde des champs JSON, liste ce qui est conservé. |
+| `erase … [--originals]`, `export …`, `audit [--days N]` | RGPD : efface (aussi dans les fichiers d'origine) ou exporte les lignes d'une personne, voir qui a regardé. Aussi dans la page **Données personnelles**. |
+| `prune [--apply]` | Montre ou supprime les lignes expirées. |
+| `archive-completed` | Archive et contrôle à la main un fichier terminé. |
+
+## Exécuter et maintenir
+
+| Commande | Ce qu'elle fait |
+|---|---|
+| `service install [--start] / start / stop / status` | Service : systemd sous Linux, launchd sous macOS. |
+| `access user-add / user-remove / user-list / address / proxy` | Autres ordinateurs : utilisateurs, adresse, reverse proxy. |
+| `config export / import / poll / web-port` | Réglages. |
+| `update check / install / status / configure` | Mises à jour signées (Linux). |
+| `diagnostics`, `self-check`, `init` | Erreurs de Loglem, un test rapide, une configuration vide. |

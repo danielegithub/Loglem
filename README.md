@@ -4,14 +4,15 @@
 
 **One place for your server's logs: where they are, how much space they take, and how long they are kept.**
 
-Loglem reads the logs of your Linux server (`.log` files and Podman containers), copies them into a searchable archive, and automatically deletes archived entries once the retention period you chose has passed. You manage everything from a browser page on the server itself or from a keyboard-driven terminal menu, without editing configuration files.
+Loglem reads your logs, copies them into a searchable archive, and deletes the copies when the time you chose has passed. You use a web page or a terminal menu. No configuration files.
 
-> **Status: experimental.** It works and is tested, but there is no published release yet and some parts still need end-to-end checks on a real server. See [Limitations](docs/limitations.md).
+> **Status: experimental.** It works and is tested on macOS. There is no published release yet, and some parts are not tested on real Linux. See [Limitations](docs/limitations.md).
 
 ## Contents
 
 - [Why Loglem](#why-loglem)
-- [What it does](#what-it-does)
+- [What it reads](#what-it-reads)
+- [Safe cleanup of original files](#safe-cleanup-of-original-files)
 - [Quick start](#quick-start)
 - [Install](#install)
 - [Documentation](#documentation)
@@ -19,60 +20,62 @@ Loglem reads the logs of your Linux server (`.log` files and Podman containers),
 
 ## Why Loglem
 
-Logs pile up in many places: a folder for the web server, another for the app, the output of each container. Nobody remembers where they are, how big they have grown, or when they should be deleted.
+Logs pile up in many places. Nobody remembers where they are, how big they are, or when to delete them.
 
-With Loglem:
+- **You see everything.** One list: every source, where it is, the size, the state.
+- **You choose how long.** 28 days, 6 months, 2 years, per source. Old copies disappear by themselves.
+- **You can search.** Text, dates, IP, path, status code. Also after the file was rotated or the container removed. New lines appear live.
+- **It stays small.** One program of about 5 MB. About 10 MB of RAM. No database server, no account, no cloud. Your logs stay on your machine.
+- **It is safe by default.** Original files are only read. Deleting them is optional and checked (see below).
+- **It is simple.** A web page, a terminal menu that works over SSH, and commands for scripts.
+- **It shows what went wrong.** A stopped source, a gap in the logs, a full disk: you see it, and `loglem check` tells your monitor.
+- **It helps with personal data.** Mask IPs, erase or export one person's lines, see who looked at the logs. See [privacy](docs/privacy.md).
 
-- **You always know where the logs are.** One list shows every source, the original location, the archive location, the size and the state of the last collection.
-- **You decide how long each source is kept.** Set 28 days, 6 months or 2 years per source. Expired entries are removed for you, so the disk does not fill up and old data does not stay around by accident.
-- **You can find things.** Search text and date ranges across everything that was collected, even after the original file was rotated or the container was removed.
-- **It stays out of the way.** A single executable of about 4 MB, around 10 MB of RAM while idle, no database server, no account and no cloud service. Your logs never leave the machine.
-- **It is safe by default.** Original files are only read, never modified. Deleting an original is optional and happens only for files you explicitly hand over as finished.
-- **It is simple to operate.** Everything is done from a page that listens only on the server itself, or from a terminal menu that works over SSH. Commands for scripts and automation are available too.
-- **It replaces a pile of scripts.** Collecting, cleaning up, keeping and searching logs usually means a mix of rotation rules, scheduled jobs and ad-hoc commands. Loglem does it in one place, with the same settings in the web page, the terminal and the command line.
-- **It moves with you.** Paths, containers and durations are settings, not code: export the configuration and import it on another machine.
+## What it reads
 
-## What it does
+| Source | Notes |
+|---|---|
+| Folders and files of `.log` text | Also rotated files, also `.gz` (history is imported once, never duplicated). |
+| Caddy, Nginx, Apache | Found automatically in their configuration. |
+| Podman, Docker | A container, or by name through the journal. |
+| Kubernetes | One pod, or all pods of an application. |
+| Linux journal | All of it, or some services, programs or severities. |
 
-1. **You add a source:** a folder of `.log` files, a single file, a Podman container, or the access log of Caddy.
-2. **Loglem collects new lines** every 10 seconds by default and stores them in a small SQLite archive for that source. It remembers where it stopped, so nothing is read twice.
-3. **You search and check** from the web page or the terminal, and see the state of each source.
-4. **Old entries are removed** when they pass the retention you set for that source.
-5. **If something goes wrong,** Loglem's own errors are saved with their cause and are visible in a Diagnostics page. A failing source never stops the others.
+## Safe cleanup of original files
 
-It runs as a background service (a systemd user service) or on demand. Runs on Linux, without a graphical desktop.
+Off by default. When you turn it on for a source, Loglem deletes a finished file only after this check:
+
+1. It **copies** the file into its archive.
+2. It **checks the copy against the original, byte by byte**. If a line is missing, expired or changed, it stops.
+3. It waits until nobody has changed the file for **24 hours**.
+4. Only then it deletes the original.
+
+The file a program is still writing to is never touched. If any step fails, the original stays where it is. Works for Caddy (rotated files) and for folders of finished files.
 
 ## Quick start
 
 After [installing](#install):
 
 ```sh
-# Open the guided terminal menu (arrow keys, Enter, Escape)
-loglem
-
-# Or add a folder of logs from the command line and read it once
-loglem source add-folder --name web-logs --path /srv/example/logs --days 28
+loglem                                  # terminal menu
+loglem discover                         # find Caddy, Nginx and Apache logs
+loglem source add-folder --name web --path /srv/example/logs --days 28
 loglem collect
-loglem status
-
-# Search
-loglem search --source web-logs --text '/login' --from 2026-11-01 --to 2026-11-16
-
-# Open the web page (it prints its own address, for example http://127.0.0.1:53142)
-loglem web
+loglem search --source web --text '/login' --from 2026-11-01
+loglem web                              # collects and opens the web page (it prints the address)
 ```
 
-To keep collecting after you close the terminal:
+To keep running after you close the terminal (Linux: systemd, macOS: launchd):
 
 ```sh
 loglem service install --start
 ```
 
-The terminal menu and web page currently use Italian labels. Details in [Using Loglem](docs/usage.md).
+The terminal menu and the web page use Italian labels. More in [Using Loglem](docs/usage.md).
 
 ## Install
 
-When a release is published, download the package for your machine from the **Releases** tab of this repository:
+When a release is published, download the package for your machine from the **Releases** tab:
 
 | Machine | Package suffix |
 |---|---|
@@ -81,7 +84,7 @@ When a release is published, download the package for your machine from the **Re
 
 Packages need glibc 2.39 or later (for example Ubuntu 24.04).
 
-Before installing, check the signature with the publisher's public key (`release-public.pem`), obtained through an independent channel:
+Check the signature with the publisher's public key (`release-public.pem`), obtained through an independent channel:
 
 ```sh
 openssl pkeyutl -verify -pubin -inkey release-public.pem -rawin -in SHA256SUMS -sigfile SHA256SUMS.sig
@@ -97,19 +100,21 @@ sh install.sh
 ~/Loglem/loglem
 ```
 
-Everything lives in `~/Loglem`: the program and a `data/` folder with settings, archives and diagnostics. The installer does not enable any service on its own. For Podman sources, Podman must be installed and usable by the same user.
+Everything lives in `~/Loglem`: the program and a `data/` folder. The installer does not start any service. To build it yourself, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-To build it yourself, see [CONTRIBUTING.md](CONTRIBUTING.md).
+**In a container.** Build it with `podman build -t loglem -f Containerfile .` and run it with a folder of logs mounted. See [Using Loglem](docs/usage.md#11-in-a-container).
 
 ## Documentation
 
-The documentation is available in: [English](docs/usage.md) | [Italiano](docs/it/usage.md) | [Français](docs/fr/usage.md) | [Español](docs/es/usage.md) | [Português](docs/pt/usage.md) | [Deutsch](docs/de/usage.md)
+[English](docs/usage.md) | [Italiano](docs/it/usage.md) | [Français](docs/fr/usage.md) | [Español](docs/es/usage.md) | [Português](docs/pt/usage.md) | [Deutsch](docs/de/usage.md)
 
 | Page | What is in it |
 |---|---|
-| [Using Loglem](docs/usage.md) | Step-by-step guide: add sources, search, retention, running as a service, cleanup, moving to another machine, troubleshooting, updates |
-| [Command reference](docs/cli.md) | All commands |
-| [Limitations](docs/limitations.md) | What it does not do or guarantee |
+| [Using Loglem](docs/usage.md) | Short steps for everything |
+| [Commands](docs/cli.md) | All commands |
+| [Personal data and proof mode](docs/privacy.md) | GDPR tools, erase, export, audit, sealed days |
+| [If Loglem stops](docs/stopping.md) | What you lose, and what Loglem does |
+| [Limitations](docs/limitations.md) | What it does not do or promise |
 
 ## License
 

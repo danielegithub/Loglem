@@ -1,27 +1,39 @@
 # Limites
 
-Ce que Loglem ne fait pas, ou ne garantit pas, dans cette version.
+Ce que Loglem ne fait pas, ou ne promet pas.
 
-**Ce qui est pris en charge**
+## Plateformes
 
-- Linux uniquement. Windows n'est pas pris en charge ; sur macOS il n'y a pas de service automatique (utilisez `loglem web`).
-- Sources : fichiers texte `.log` (UTF-8), conteneurs Podman et journaux d'accès de Caddy. Les fichiers compressés (`.gz`) ne sont pas lus. Docker, Kubernetes, Nginx et le journal systemd ne sont pas encore pris en charge.
-- Lignes jusqu'à 1 Mio.
-- La recherche porte sur du texte exact, avec distinction majuscules/minuscules, et sur une plage de dates. Il n'y a pas encore de filtres par gravité, adresse IP, chemin ou code de réponse.
-- La page web ne s'ouvre que depuis la machine où tourne Loglem (utilisez un tunnel SSH pour un serveur distant).
+- Linux et macOS. Le service est systemd (Linux) ou launchd (macOS). Mises à jour signées : Linux seulement.
+- Windows : le code est écrit pour être portable, mais n'a été ni compilé ni testé.
+- Aucune version n'est encore publiée.
+- Dans un conteneur, Loglem lit seulement les fichiers de journal que vous montez. Podman, Docker, Kubernetes et le journal de l'hôte demandent Loglem sur l'hôte.
 
-**Sûreté des données**
+## Ce qu'il lit
 
-- Les journaux de Podman sont lus par instantanés. Si un conteneur est supprimé avant que Loglem le lise, ou si Loglem reste arrêté longtemps, des lignes peuvent être perdues.
-- Les entrées n'expirent que pendant que Loglem tourne (ou quand vous lancez `loglem prune --apply`).
-- Supprimer une entrée de l'archive de Loglem ne l'efface pas des instantanés ou sauvegardes du système de fichiers qui l'ont déjà copiée.
-- Les archives sont des fichiers SQLite et doivent être sur un disque local, pas sur un partage réseau. Ne les copiez pas pendant que Loglem tourne ; arrêtez-le d'abord.
-- Si le disque est plein, les originaux pas encore archivés sont conservés ; Loglem ne peut ni libérer de l'espace ni empêcher d'autres programmes d'écrire.
-- Loglem ne peut pas savoir seul qu'un programme a fini avec un fichier. Son nettoyage attend 24 heures et ne touche jamais le fichier en cours d'écriture, mais ne l'activez que pour des dossiers et journaux Caddy configurés comme décrit dans le guide.
-- Les archives ne sont pas protégées contre les modifications : Loglem ne garantit pas la valeur probante des journaux.
+- Lignes de texte UTF-8 jusqu'à 1 Mio. Les autres encodages ne sont pas lus.
+- Les filtres de gravité, de code et de chemin lisent le texte de la ligne. Ils connaissent Caddy (JSON), Nginx et Apache (combined) et le journal. Les autres formats ne se trouvent qu'en cherchant le texte.
+- Les statistiques marchent avec les journaux Caddy en JSON et Nginx/Apache au format combined.
+- Pas encore d'expressions régulières.
 
-**Testé et pas encore testé**
+## Ce qui peut être perdu
 
-- Testé avec un vrai Podman et un vrai navigateur : ajout de sources depuis la page, recherche, redémarrage sans lignes perdues ni en double, expiration et rotation simulée à la manière de Caddy.
-- Pas encore testés : le service systemd sur une machine Linux réelle, Caddy en conditions réelles, et le retour à la version précédente après une mise à jour échouée.
-- Il n'y a pas encore de version publiée.
+- Podman, Docker et Kubernetes gardent les journaux seulement tant que le conteneur ou le pod existe. S'il est retiré pendant que Loglem est éteint, ces lignes sont perdues. Loglem affiche un **trou** sur la fiche.
+- Pour Kubernetes, suivez l'application par étiquette (`app=web`). Un pod seul disparaît à chaque déploiement.
+- Si Loglem est éteint, les lignes n'expirent pas et rien n'est nettoyé. Voir [stopping.md](stopping.md).
+- Disque plein : les fichiers pas encore archivés sont gardés. Loglem ne peut pas libérer de place.
+
+## Sécurité des données
+
+- Les archives sont des fichiers SQLite sur un disque local, pas sur un partage réseau. Arrêtez Loglem avant de les copier à la main, ou utilisez `loglem backup`.
+- Supprimer une ligne dans Loglem ne la supprime pas des sauvegardes ni des fichiers d'origine.
+- Loglem ne chiffre pas les données sur le disque. Utilisez un disque chiffré et des sauvegardes chiffrées.
+- La liaison vers la page web n'est pas chiffrée. Utilisez un VPN ou un reverse proxy HTTPS.
+- Loglem ne peut pas savoir si un programme a fini avec un fichier. Le nettoyage attend 24 heures et ne touche jamais le fichier en cours d'usage.
+- Le mode preuve montre qu'un jour scellé n'a pas changé. Il ne prouve pas que les lignes étaient vraies. Voir [privacy.md](privacy.md).
+
+## Ce qui a été testé
+
+Testé sur macOS avec Podman, journald (dans un conteneur Linux), Caddy, Chrome et une vraie autorité d'horodatage : ajout de sources depuis la page, recherche, direct, connexion avec mot de passe, redémarrage sans ligne perdue ni dupliquée, expiration, rotation de Caddy, reverse proxy, sauvegarde et restauration, mode preuve, effacement.
+
+Non testé : le service systemd sur un vrai Linux, un vrai cluster Kubernetes (un faux `kubectl` a été utilisé), l'agent launchd de macOS, Windows et une mise à jour depuis une version publiée.

@@ -1,27 +1,39 @@
 # Limitations
 
-What Loglem does not do, or does not guarantee, in this version.
+What Loglem does not do, or does not promise.
 
-**Supported**
+## Platforms
 
-- Linux only. Windows is not supported; on macOS there is no automatic service (use `loglem web`).
-- Sources: `.log` text files (UTF-8), Podman containers and Caddy access logs. Compressed files (`.gz`) are not read. Docker, Kubernetes, Nginx and the systemd journal are not supported yet.
-- Lines up to 1 MiB.
-- Search is for exact, case-sensitive text and a date range. There are no filters by severity, IP address, path or status code yet.
-- The web page can only be opened from the machine where Loglem runs (use an SSH tunnel for a remote server).
+- Linux and macOS. The service is systemd (Linux) or launchd (macOS). Signed updates: Linux only.
+- Windows: the code is written to be portable, but it has not been built or tested.
+- No release is published yet.
+- In a container, Loglem reads only the log files you mount. Podman, Docker, Kubernetes and the host journal need Loglem on the host.
 
-**Data safety**
+## What it reads
 
-- Podman logs are read in snapshots. If a container is deleted before Loglem reads it, or Loglem is stopped for a long time, some lines can be lost.
-- Entries expire only while Loglem is running (or when you run `loglem prune --apply`).
-- Deleting an entry from Loglem's archive does not erase it from file-system snapshots or backups that already copied it.
-- Archives are SQLite files and must be on a local disk, not a network share. Do not copy them while Loglem is running; stop it first.
-- If the disk is full, originals that are not yet archived are kept; Loglem cannot free space or stop other programs writing.
-- Loglem cannot tell by itself that a program has finished with a file. Its cleanup waits 24 hours and never touches the file being written, but only enable it for folders and Caddy logs set up as described in the guide.
-- Archives are not tamper-proof: Loglem is not an evidence archive.
+- UTF-8 text lines up to 1 MiB. Other encodings are not read.
+- Severity, status code and path filters read the text of the line. They know Caddy (JSON), Nginx and Apache (combined), and the journal. Other formats are only found by text.
+- Statistics work on Caddy JSON and Nginx/Apache combined logs.
+- No regular expressions yet.
 
-**Tested and not yet tested**
+## What can be lost
 
-- Tested with real Podman and a real browser: adding sources from the page, search, restart without lost or duplicated lines, expiry and simulated Caddy-style rotation.
-- Not tested yet: the systemd service on a real Linux machine, real Caddy, and returning to the previous version after a failed update.
-- There is no published release yet.
+- Podman, Docker and Kubernetes keep logs only while the container or pod exists. If it is removed while Loglem is off, those lines are lost. Loglem shows a **gap** on the card.
+- For Kubernetes, follow the application by label (`app=web`). A single pod disappears at every release.
+- If Loglem is off, entries do not expire and nothing is cleaned up. See [stopping.md](stopping.md).
+- A full disk: files not yet archived are kept. Loglem cannot free space.
+
+## Data safety
+
+- Archives are SQLite files on a local disk, not a network share. Stop Loglem before you copy them by hand, or use `loglem backup`.
+- Deleting a line from Loglem does not delete it from backups or from the original files.
+- Loglem does not encrypt data on disk. Use an encrypted disk and encrypted backups.
+- The link to the web page is not encrypted. Use a VPN or HTTPS reverse proxy.
+- Loglem cannot know if a program has finished with a file. Cleanup waits 24 hours and never touches the file in use.
+- Proof mode shows that a sealed day did not change. It does not prove the lines were true. See [privacy.md](privacy.md).
+
+## What was tested
+
+Tested on macOS with real Podman, journald (in a Linux container), Caddy, Chrome and a real time-stamp authority: adding sources from the page, search, live view, login, restart without lost or duplicated lines, expiry, Caddy rotation, reverse proxy, backup and restore, proof mode, erase.
+
+Not tested: the systemd service on real Linux, a real Kubernetes cluster (a fake `kubectl` was used), the macOS launchd agent, Windows, and an update from a published release.

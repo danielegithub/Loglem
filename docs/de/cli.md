@@ -1,21 +1,47 @@
-# Befehlsreferenz
+# Befehle
 
-Mit `loglem --help` oder `loglem BEFEHL --help` sehen Sie die Optionen der installierten Version. Ohne Befehl öffnet Loglem das per Tastatur bedienbare Terminalmenü; `loglem tui` tut dasselbe ausdrücklich.
+`loglem BEFEHL --help` zeigt alle Optionen. Ohne Befehl öffnet Loglem das Terminalmenü. Setzen Sie `--data-dir /absoluter/pfad` vor den Befehl, um einen anderen Datenordner zu nutzen (oder setzen Sie `LOGLEM_DATA_DIR`).
 
-| Befehl | Wofür |
+## Quellen und Lesen
+
+| Befehl | Was er tut |
 |---|---|
-| `init` | Legt eine leere Konfiguration an. |
-| `source list` | Listet die Quellen auf. Zum Hinzufügen: `source add-folder`, `add-file`, `add-podman` oder `add-caddy` (Caddy-Log mit Aufräumen rotierter Dateien). |
-| `podman-list` | Findet Container und Pods; `--connection` wählt eine benannte Verbindung. |
-| `status [--json]` | Zeigt die Speicherorte und Größen der Archive, Datumsangaben und den Status der Erfassung. |
-| `collect` / `serve` | Erfasst einmal, oder lässt den Dienst (Erfassung plus Webseite unter fester Adresse) bis zum Beenden laufen. `web` tut dasselbe oder gibt die Adresse aus, wenn der Dienst schon läuft. |
-| `search [...]` | Durchsucht die Archive nach Text und Datumsbereichen; `--json` liefert maschinenlesbare Ausgabe. |
-| `prune [--apply]` | Zeigt abgelaufene Einträge, oder löscht sie mit `--apply` aus den Archiven. |
-| `config export FILE` / `config import FILE` | Exportiert oder importiert die Konfiguration der Quellen. |
-| `config poll N` | Stellt das Intervall der automatischen Erfassung ein (in Sekunden). |
-| `config web-port N` | Wählt den festen lokalen Port der Webseite (ab dem nächsten Start). |
-| `service install [--start]` | Registriert einen systemd-Benutzerdienst; `start`, `stop` und `status` verwalten ihn. |
-| `diagnostics` | Gibt gespeicherte Fehler von Loglem samt Stack-Traces aus. |
-| `self-check` | Prüft die ausführbare Datei und das eingebaute SQLite-Schema, ohne Daten anzufassen. |
+| `source add-folder / add-file / add-caddy / add-podman / add-docker / add-kubernetes / add-journal` | Fügt eine Quelle hinzu. |
+| `source list`, `source set NAME --days N` | Listet Quellen auf, ändert die Dauer. |
+| `source configure NAME …` | Name, Ordner für fertige Dateien, Aufräumen rotierter Dateien, Pfad. |
+| `discover` | Sucht die Logs von Caddy, Nginx und Apache. |
+| `podman-list`, `docker-list`, `kubernetes-list` | Listet Container oder Pods auf. |
+| `collect` | Liest einmal. |
+| `serve` / `web` | Liest dauerhaft und stellt die Webseite bereit. |
+| `status [--json]` | Orte, Größen, Daten, Zustand, Lücken. |
+| `check [--minutes N]` | Exit-Code 1, wenn Loglem aus ist, eine Quelle nicht gelesen wird oder eine Warnung auslöst. |
 
-Geben Sie vor dem Befehl `--data-dir /absoluter/pfad` an, um den Datenordner zu wählen; `LOGLEM_DATA_DIR` leistet in der Automatisierung dasselbe. Befehle zum Verwalten von Quellen und Updates sind in [usage.md](usage.md) beschrieben.
+## Suchen und verfolgen
+
+| Befehl | Was er tut |
+|---|---|
+| `search` | `--text --ignore-case --level error --ip --path --status --from --to --source --limit --json` |
+| `tail` | Dieselben Filter, live. `--server URL --user NAME` folgt einem entfernten Loglem. |
+| `stats QUELLE [--days N] [--json]` | Anfragen pro Tag, Seiten, Statuscodes, IPs, langsame Seiten. |
+
+## Daten pflegen
+
+| Befehl | Was er tut |
+|---|---|
+| `alerts list / add-pattern / add-size / add-free-space / remove / command / seen` | Warnregeln und Benachrichtigung. |
+| `backup DIR`, `backup-verify DIR`, `restore DIR [--replace]` | Sichert, prüft und stellt Daten wieder her. |
+| `proof enable / disable / verify` | Beweismodus: versiegelt jeden Tag. |
+| `privacy set QUELLE …`, `privacy report` | Maskiert IPs, behält JSON-Felder, listet auf, was gespeichert ist. |
+| `erase … [--originals]`, `export …`, `audit [--days N]` | DSGVO: löscht (auch aus den Originaldateien) oder exportiert die Zeilen einer Person, zeigt, wer nachgesehen hat. Auch auf der Seite **Personenbezogene Daten**. |
+| `prune [--apply]` | Zeigt oder löscht abgelaufene Zeilen. |
+| `archive-completed` | Archiviert und prüft eine fertige Datei von Hand. |
+
+## Betreiben und pflegen
+
+| Befehl | Was er tut |
+|---|---|
+| `service install [--start] / start / stop / status` | Dienst: systemd unter Linux, launchd unter macOS. |
+| `access user-add / user-remove / user-list / address / proxy` | Andere Computer: Benutzer, Adresse, Reverse-Proxy. |
+| `config export / import / poll / web-port` | Einstellungen. |
+| `update check / install / status / configure` | Signierte Updates (Linux). |
+| `diagnostics`, `self-check`, `init` | Loglems Fehler, ein Schnelltest, eine leere Konfiguration. |
