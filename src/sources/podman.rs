@@ -284,8 +284,18 @@ pub fn log_config(
         .or_else(|| config["Config"]["max-size"].as_str())
         .filter(|s| !s.starts_with('-') && *s != "0B")
         .map(str::to_owned);
-    let journald = driver == "journald";
+    // Seguirlo dal journal richiede di poterlo leggere qui: serve `journalctl` su questo
+    // computer e un container locale (non una connessione remota, né la macchina virtuale
+    // di Podman su macOS).
+    let uses_journal = driver == "journald";
+    let journald = uses_journal && connection.is_none() && crate::sources::journal::available();
     let advice = match (driver.as_str(), &max_size) {
+        ("journald", _) if !journald => {
+            "I log del container vanno nel journal, che da qui non si può leggere direttamente: \
+            Loglem li legge con il comando del runtime. La durata del journal la imposta \
+            l'amministratore di quel sistema (MaxRetentionSec o SystemMaxUse)."
+                .to_owned()
+        }
         ("journald", _) => {
             "I log del container vanno nel journal, condiviso con tutto il sistema. \
             Per limitarne la durata un amministratore imposta MaxRetentionSec o SystemMaxUse in \

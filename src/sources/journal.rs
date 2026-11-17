@@ -89,6 +89,17 @@ impl Filter {
 }
 
 /// Il programma da eseguire; `LOGLEM_JOURNALCTL` serve per le prove.
+/// `journalctl` si può avviare su questo computer? Su macOS e dove manca systemd, no.
+pub fn available() -> bool {
+    journalctl()
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 fn journalctl() -> Command {
     Command::new(std::env::var_os("LOGLEM_JOURNALCTL").unwrap_or_else(|| "journalctl".into()))
 }
