@@ -7,9 +7,22 @@
 *.db
 *.db-shm
 *.db-wal
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-*
 .DS_Store
 __pycache__/
 *.pyc
 /.ci-venv/
 *.pem
 /notes/
+# Dati di Loglem se la cartella dati è dentro il progetto
+/proof/
+/audit/
+/archives/
+/diagnostics/
+health.json
+*.chain
+*.tsa
+.env
