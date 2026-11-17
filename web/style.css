@@ -1215,3 +1215,119 @@ button.danger {
 .level-check input {
   accent-color: currentColor;
 }
+
+/* Suggerimenti sui dati personali: stesse misure di pannelli e schede. */
+.advice {
+  margin: 0 0 24px;
+}
+
+.panel.advice {
+  margin-bottom: 18px;
+}
+
+.advice > .section-heading {
+  margin-bottom: 4px;
+}
+
+.advice-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.advice-item {
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.advice-item.important {
+  border-left-color: var(--level-error);
+}
+
+.advice-item[data-state="done"],
+.advice-item[data-state="declined"],
+.advice-item[data-state="later"] {
+  border-left-color: var(--border);
+  background: #fafbfc;
+}
+
+.advice-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.advice-head h4 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.advice-item p {
+  margin: 8px 0 0;
+  max-width: 72ch;
+}
+
+.advice-item details {
+  margin-top: 8px;
+}
+
+.advice-item summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.advice-verify {
+  color: var(--muted);
+}
+
+.advice-refs {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.advice-refs a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.advice-actions {
+  margin-top: 14px;
+}
+
+.advice-foot {
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.advice-foot p {
+  margin: 4px 0;
+}
+
+.advice-unverified {
+  color: #7a5200;
+}
+
+.advice-note {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+
+.advice-note a {
+  color: var(--accent);
+}
+
+.advice-note a.advice-important {
+  color: var(--level-error);
+}
+
+.advice-note a.text-link {
+  margin: 0;
+}

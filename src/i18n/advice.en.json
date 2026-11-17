@@ -1,0 +1,88 @@
+{
+  "revised": "2026-11-17",
+  "verified": false,
+  "disclaimer": "These are suggestions, not legal advice. Loglem helps you, but it does not make an installation compliant on its own: the choices stay yours.",
+  "unverified": "The legal references in these suggestions have not been checked by an expert yet. Check them before relying on them.",
+  "lines": { "one": "{n} line", "many": "{n} lines" },
+  "laws": {
+    "gdpr": {
+      "name": "Regulation (EU) 2016/679 (GDPR)",
+      "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32016R0679"
+    },
+    "garante_2008": {
+      "name": "Italian Data Protection Authority, decision of 27 November 2008 on system administrators",
+      "url": "https://www.garanteprivacy.it/web/guest/home/docweb/-/docweb-display/docweb/1577499"
+    }
+  },
+  "items": {
+    "ip": {
+      "title": "This log contains IP addresses",
+      "why": "I found IP addresses in {lines} out of {sample} I looked at. An IP address can be personal data (Art. 4(1) and Recital 30), and only the data you need should be processed (Art. 5(1)(c)).",
+      "proposal": "I suggest masking the last part of the addresses: 203.0.113.7 becomes 203.0.113.0. It still tells you where requests come from, but it identifies a person less: it is the cautious choice (Art. 25). Note: masked lines cannot be restored. If you need full addresses for security, keep them and choose a short retention.",
+      "verify": "Check this choice with whoever handles privacy for you, and mention these logs in your site's privacy notice (Art. 13).",
+      "action": "Mask IP addresses",
+      "done": "IP addresses in this log are masked.",
+      "refs": [
+        { "law": "gdpr", "text": "Art. 4(1), Recital 30" },
+        { "law": "gdpr", "text": "Art. 5(1)(c), Art. 25" }
+      ]
+    },
+    "retention_long": {
+      "title": "The retention is long for a log with personal data",
+      "why": "You keep these copies for {period}. Personal data should be kept only as long as the purpose requires (Art. 5(1)(e)).",
+      "proposal": "I suggest {proposal}: it is usually enough for security and for investigating a problem. It is a starting point, not a rule. If you have a reason to keep them longer, such as a legal duty or an ongoing dispute, keep them and write down the reason.",
+      "verify": "Check the retention with whoever handles privacy for you.",
+      "action": "Set {proposal}",
+      "done": "",
+      "refs": [{ "law": "gdpr", "text": "Art. 5(1)(e)" }]
+    },
+    "user": {
+      "title": "This log contains email addresses or user names",
+      "why": "I found email addresses or user names in {lines} out of {sample}. A person can ask to see their data or to have it erased (Art. 15 and 17), and the answer is due within one month (Art. 12(3)).",
+      "proposal": "Loglem already has what you need: on the «Personal data» page you find, download or erase the lines of one person, and every operation is kept in the access log. Remember that backups and other programs' logs are outside Loglem.",
+      "verify": "Check with whoever handles privacy for you how you receive and record these requests.",
+      "action": "Open «Personal data»",
+      "done": "",
+      "refs": [{ "law": "gdpr", "text": "Art. 12(3), Art. 15, Art. 17" }]
+    },
+    "secret": {
+      "title": "The log contains passwords, tokens or sessions",
+      "why": "In {lines} out of {sample} I found what looks like a credential. Whoever reads the log could use it to log in as someone else. Data must be protected against unauthorised access (Art. 5(1)(f) and Art. 32).",
+      "proposal": "I suggest three steps. 1) Erase these lines from the archive: on the «Personal data» page search for the parameter name, for example «token=». 2) Change the credentials that appear: they have already been written down. 3) Fix the program that writes them to the log, or have the web server hide those fields.",
+      "verify": "If these are other people's credentials, check with whoever handles privacy whether a breach must be notified (Art. 33, within 72 hours).",
+      "action": "Open «Personal data»",
+      "done": "",
+      "refs": [{ "law": "gdpr", "text": "Art. 5(1)(f), Art. 32, Art. 33" }]
+    },
+    "card": {
+      "title": "The log contains card numbers",
+      "why": "In {lines} out of {sample} I found what looks like a payment card number. A log should never contain them: only the data you need should be processed, and it must be protected (Art. 5(1)(c) and Art. 32).",
+      "proposal": "I suggest erasing these lines right away from the «Personal data» page and fixing the program that writes them. Payment industry rules (PCI DSS) also forbid storing them in clear text.",
+      "verify": "Check with whoever handles privacy and payments whether a breach must be notified (Art. 33).",
+      "action": "Open «Personal data»",
+      "done": "",
+      "refs": [{ "law": "gdpr", "text": "Art. 5(1)(c), Art. 32, Art. 33" }]
+    },
+    "admin_access": {
+      "title": "This is the server access log",
+      "why": "I found server logins (SSH, sudo, login) in {lines} out of {sample}. In Italy the Data Protection Authority asks to record system administrators' logins, keep them at least six months and make them tamper-proof.",
+      "proposal": "I suggest keeping them at least 6 months (now: {period}) and turning on proof mode, which seals the lines every day with chained fingerprints. An external copy that cannot be deleted is up to you.",
+      "verify": "If you are not in Italy, check your country's rules. Security measures are also required by Art. 32.",
+      "action": "Set 6 months",
+      "done": "These logins are kept at least six months.",
+      "refs": [
+        { "law": "garante_2008", "text": "point 4.5" },
+        { "law": "gdpr", "text": "Art. 32" }
+      ]
+    },
+    "notice": {
+      "title": "Mention this log in your privacy notice",
+      "why": "The log contains personal data. People have the right to know what data you collect, why and how long you keep it (Art. 13).",
+      "proposal": "I suggest writing in your site's privacy notice which data ends up in this log (see above), why you keep it (for example security and fixing errors) and for how long: now {period}.",
+      "verify": "Check the text with whoever handles privacy for you.",
+      "action": "",
+      "done": "",
+      "refs": [{ "law": "gdpr", "text": "Art. 13" }]
+    }
+  }
+}

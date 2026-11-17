@@ -1,0 +1,88 @@
+{
+  "revised": "2026-11-17",
+  "verified": false,
+  "disclaimer": "Sono suggerimenti, non una consulenza legale. Loglem ti aiuta, ma non rende conforme un'installazione da solo: le scelte restano tue.",
+  "unverified": "I riferimenti di legge di questi suggerimenti non sono ancora stati verificati da un esperto. Controllali prima di basarti su di essi.",
+  "lines": { "one": "{n} riga", "many": "{n} righe" },
+  "laws": {
+    "gdpr": {
+      "name": "Regolamento (UE) 2016/679 (GDPR)",
+      "url": "https://eur-lex.europa.eu/legal-content/IT/TXT/?uri=CELEX:32016R0679"
+    },
+    "garante_2008": {
+      "name": "Garante privacy, provvedimento del 27 novembre 2008 sugli amministratori di sistema",
+      "url": "https://www.garanteprivacy.it/web/guest/home/docweb/-/docweb-display/docweb/1577499"
+    }
+  },
+  "items": {
+    "ip": {
+      "title": "In questo log ci sono indirizzi IP",
+      "why": "Ho trovato indirizzi IP in {lines} su {sample} che ho guardato. Un indirizzo IP può essere un dato personale (art. 4(1) e considerando 30), e vanno trattati solo i dati che servono (art. 5(1)(c)).",
+      "proposal": "Ti propongo di mascherare l'ultima parte degli indirizzi: 203.0.113.7 diventa 203.0.113.0. Resta utile per capire da dove arrivano le richieste, ma identifica meno una persona: è la scelta prudente (art. 25). Attenzione: sulle righe già mascherate non si torna indietro. Se ti servono gli indirizzi interi per la sicurezza, tienili e scegli una durata breve.",
+      "verify": "Verifica la scelta con chi si occupa di privacy da voi, e cita questi log nell'informativa del sito (art. 13).",
+      "action": "Maschera gli IP",
+      "done": "Gli indirizzi IP di questo log vengono mascherati.",
+      "refs": [
+        { "law": "gdpr", "text": "art. 4(1), considerando 30" },
+        { "law": "gdpr", "text": "art. 5(1)(c), art. 25" }
+      ]
+    },
+    "retention_long": {
+      "title": "La durata è lunga per un log con dati personali",
+      "why": "Conservi queste copie per {period}. I dati personali vanno tenuti solo il tempo necessario allo scopo (art. 5(1)(e)).",
+      "proposal": "Ti propongo {proposal}: di solito basta per la sicurezza e per capire un problema. È un punto di partenza, non una regola. Se hai un motivo per tenerle di più, per esempio un obbligo di legge o una contestazione in corso, tienile e annota il motivo.",
+      "verify": "Verifica la durata con chi si occupa di privacy da voi.",
+      "action": "Imposta {proposal}",
+      "done": "",
+      "refs": [{ "law": "gdpr", "text": "art. 5(1)(e)" }]
+    },
+    "user": {
+      "title": "In questo log ci sono email o nomi utente",
+      "why": "Ho trovato email o nomi utente in {lines} su {sample}. Una persona può chiederti di vedere i suoi dati o di cancellarli (art. 15 e 17), e la risposta va data entro un mese (art. 12(3)).",
+      "proposal": "Loglem ha già quello che serve: nella pagina «Dati personali» trovi, scarichi o cancelli le righe di una persona, e ogni operazione resta nel registro degli accessi. Ricorda che i backup e i log di altri programmi restano fuori da Loglem.",
+      "verify": "Verifica con chi si occupa di privacy da voi come ricevete e registrate queste richieste.",
+      "action": "Apri «Dati personali»",
+      "done": "",
+      "refs": [{ "law": "gdpr", "text": "art. 12(3), art. 15, art. 17" }]
+    },
+    "secret": {
+      "title": "Nel log ci sono password, token o sessioni",
+      "why": "In {lines} su {sample} ho trovato quella che sembra una credenziale. Chi legge il log potrebbe usarla per entrare al posto di qualcun altro. I dati vanno protetti dagli accessi non autorizzati (art. 5(1)(f) e art. 32).",
+      "proposal": "Ti propongo tre passi. 1) Cancella queste righe dall'archivio: nella pagina «Dati personali» cerca il nome del parametro, per esempio «token=». 2) Cambia le credenziali che compaiono: sono già state scritte. 3) Correggi il programma che le scrive nel log, o fai oscurare quei campi al server web.",
+      "verify": "Se sono credenziali di altre persone, valuta con chi si occupa di privacy se va segnalata una violazione (art. 33, entro 72 ore).",
+      "action": "Apri «Dati personali»",
+      "done": "",
+      "refs": [{ "law": "gdpr", "text": "art. 5(1)(f), art. 32, art. 33" }]
+    },
+    "card": {
+      "title": "Nel log ci sono numeri di carta",
+      "why": "In {lines} su {sample} ho trovato quello che sembra un numero di carta di pagamento. Un log non dovrebbe mai contenerli: vanno trattati solo i dati che servono e protetti (art. 5(1)(c) e art. 32).",
+      "proposal": "Ti propongo di cancellare subito queste righe dalla pagina «Dati personali» e di correggere il programma che le scrive. Anche le regole del settore dei pagamenti (PCI DSS) vietano di conservarli in chiaro.",
+      "verify": "Verifica con chi si occupa di privacy e dei pagamenti se va segnalata una violazione (art. 33).",
+      "action": "Apri «Dati personali»",
+      "done": "",
+      "refs": [{ "law": "gdpr", "text": "art. 5(1)(c), art. 32, art. 33" }]
+    },
+    "admin_access": {
+      "title": "Questo è il registro degli accessi al server",
+      "why": "Ho trovato accessi al server (SSH, sudo, login) in {lines} su {sample}. In Italia il Garante indica di registrare gli accessi degli amministratori di sistema, di conservarli almeno sei mesi e di renderli non modificabili.",
+      "proposal": "Ti propongo di conservarli almeno 6 mesi (ora: {period}) e di attivare la modalità prova, che sigilla ogni giorno le righe con impronte concatenate. Una copia esterna non cancellabile resta a tuo carico.",
+      "verify": "Se non sei in Italia, verifica le regole del tuo paese. Le misure di sicurezza sono richieste anche dall'art. 32.",
+      "action": "Imposta 6 mesi",
+      "done": "Questi accessi vengono conservati almeno sei mesi.",
+      "refs": [
+        { "law": "garante_2008", "text": "punto 4.5" },
+        { "law": "gdpr", "text": "art. 32" }
+      ]
+    },
+    "notice": {
+      "title": "Cita questo log nell'informativa",
+      "why": "Il log contiene dati personali. Le persone hanno diritto di sapere quali dati raccogli, perché e per quanto li tieni (art. 13).",
+      "proposal": "Ti propongo di scrivere nell'informativa del sito quali dati finiscono in questo log (vedi sopra), perché li tieni (per esempio sicurezza e correzione degli errori) e per quanto: ora {period}.",
+      "verify": "Verifica il testo con chi si occupa di privacy da voi.",
+      "action": "",
+      "done": "",
+      "refs": [{ "law": "gdpr", "text": "art. 13" }]
+    }
+  }
+}

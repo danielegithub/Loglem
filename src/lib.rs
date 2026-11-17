@@ -1,4 +1,5 @@
 pub mod access;
+pub mod advice;
 pub mod alerts;
 pub mod archive;
 pub mod audit;
@@ -9,6 +10,7 @@ pub mod config;
 pub mod diagnostics;
 pub mod discover;
 pub mod erase;
+pub mod findings;
 pub mod health;
 pub mod management;
 pub mod model;

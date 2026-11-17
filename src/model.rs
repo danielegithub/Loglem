@@ -25,6 +25,9 @@ pub struct Source {
     /// Archivia ed elimina i file ruotati (es. Caddy) dopo averli verificati.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub remove_rotated: bool,
+    /// Le scelte sui suggerimenti (fatto, non mi riguarda, rimandato), con data e utente.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub advice: std::collections::BTreeMap<String, crate::advice::Choice>,
     pub retention_days: u32,
     pub enabled: bool,
     #[serde(flatten)]
@@ -121,6 +124,7 @@ impl Default for Source {
             completed_dir: None,
             detached: false,
             remove_rotated: false,
+            advice: Default::default(),
             privacy: Default::default(),
             proof: None,
             retention_days: 28,

@@ -350,6 +350,31 @@ fn serve_static(stream: TcpStream, route: &str, csrf: Option<&str>) -> Result<()
 
 /// Dati di una persona: anteprima, cancellazione, esportazione e registro degli accessi.
 /// Solo per gli amministratori (non sono tra le azioni dei lettori).
+/// Suggerimenti su cosa c'è nel log e su come trattarlo (solo amministratori).
+/// Le scelte finiscono nel registro degli accessi da `advice`.
+fn advice_route(route: &str, app: &App, body: &Value, who: &str) -> Result<Value> {
+    let name = text(body, "name")?;
+    let who = format!("web:{who}");
+    match route {
+        "/api/advice" => crate::advice::report(&app.dir, name, crate::advice::DEFAULT_LANGUAGE),
+        "/api/advice-apply" => {
+            crate::advice::apply(&app.dir, name, text(body, "id")?, &who)?;
+            app.worker.request();
+            Ok(json!({"message": "Proposta applicata."}))
+        }
+        _ => {
+            crate::advice::choose(
+                &app.dir,
+                name,
+                text(body, "id")?,
+                text(body, "choice")?,
+                &who,
+            )?;
+            Ok(json!({"message": "Scelta registrata."}))
+        }
+    }
+}
+
 fn data_rights(route: &str, app: &App, body: &Value, who: &str) -> Result<Value> {
     let source = body
         .get("source")
@@ -642,6 +667,9 @@ fn handle(stream: TcpStream, app: &App, address: &str) -> Result<()> {
         })),
         "/api/erase-preview" | "/api/erase" | "/api/export" | "/api/audit" => {
             data_rights(route, app, &body, &who)
+        }
+        "/api/advice" | "/api/advice-apply" | "/api/advice-choice" => {
+            advice_route(route, app, &body, &who)
         }
         "/api/logout" => {
             if let Some(id) = &session_id {

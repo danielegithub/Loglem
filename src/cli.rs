@@ -137,6 +137,19 @@ pub enum Action {
         #[arg(long)]
         json: bool,
     },
+    /// Cosa c'è nel log di una sorgente (IP, email, credenziali…) e cosa Loglem ti suggerisce,
+    /// con i riferimenti di legge. Sono suggerimenti: verificali
+    Advice {
+        source: String,
+        /// Applica la proposta di un suggerimento (es. --apply ip)
+        #[arg(long, conflicts_with = "choose")]
+        apply: Option<String>,
+        /// Registra una scelta: ID=done, ID=declined, ID=later o ID=reopen (es. --choose notice=done)
+        #[arg(long)]
+        choose: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Modalità prova: sigillo giornaliero con impronte concatenate e verifica.
     Proof {
         #[command(subcommand)]
@@ -509,6 +522,7 @@ pub fn run(cli: Cli) -> Result<()> {
     if matches!(cli.command, Some(Action::SelfCheck)) {
         let db = rusqlite::Connection::open_in_memory()?;
         db.execute_batch(include_str!("schema.sql"))?;
+        crate::advice::check_catalogs()?;
         println!("Loglem {}: executable and SQLite schema OK", crate::VERSION);
         return Ok(());
     }
@@ -624,7 +638,12 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
                 }
                 SourceAction::Remove { name } => {
                     crate::management::remove(dir, &name)?;
-                    crate::audit::record(dir, "console", "elimina sorgente", &format!("sorgente: {name}"));
+                    crate::audit::record(
+                        dir,
+                        "console",
+                        "elimina sorgente",
+                        &format!("sorgente: {name}"),
+                    );
                     println!("Sorgente {name} eliminata, con il suo storico.");
                 }
                 SourceAction::AddFolder { name, path, days } => {
@@ -997,6 +1016,30 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&stats)?);
             } else {
                 print!("{}", crate::stats::text(&stats));
+            }
+            Ok(())
+        }
+        Action::Advice {
+            source,
+            apply,
+            choose,
+            json,
+        } => {
+            let language = crate::advice::DEFAULT_LANGUAGE;
+            if let Some(id) = apply {
+                crate::advice::apply(dir, &source, &id, "console")?;
+                println!("Proposta «{id}» applicata.");
+            } else if let Some(choice) = choose {
+                let (id, choice) = choice
+                    .split_once('=')
+                    .context("Scrivi ID=done, ID=declined o ID=later")?;
+                crate::advice::choose(dir, &source, id, choice, "console")?;
+                println!("Scelta registrata.");
+            } else if json {
+                let report = crate::advice::report(dir, &source, language)?;
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("{}", crate::advice::text(dir, &source, language)?);
             }
             Ok(())
         }

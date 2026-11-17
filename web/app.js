@@ -209,6 +209,8 @@ function renderSourceCard(source) {
     );
   }
 
+  card.append(adviceNote(source));
+
   const actions = element('div', undefined, 'row');
   actions.append(
     link('Vedi i log →', '#logs/' + encodeURIComponent(source.source), 'button primary'),
@@ -732,6 +734,213 @@ function configureSource(source, description, suggestion) {
   $('source-name').focus();
 }
 
+// ---------- suggerimenti sui dati personali ----------
+
+// Loglem guarda le righe recenti di una sorgente e propone la scelta prudente, con il
+// riferimento di legge. Le scelte restano dell'utente: applica, fatto, più tardi, non mi riguarda.
+
+const ADVICE_STATE = {
+  done: ['Fatto', ''],
+  declined: ['Non ti riguarda', 'waiting'],
+  later: ['Rimandato', 'waiting'],
+};
+const adviceCache = new Map(); // sorgente → { at, open, important }
+let adviceWatch = 0;
+let adviceWatchSource = null; // la sorgente appena aggiunta, a cui si riferisce il pannello
+
+function adviceItem(item, name, compact, reload) {
+  const box = element('article', undefined, 'advice-item' + (item.important ? ' important' : ''));
+  box.dataset.state = item.state;
+  const head = element('div', undefined, 'advice-head');
+  head.append(element('h4', item.title));
+  const label = ADVICE_STATE[item.state];
+  if (label) head.append(element('span', label[0], 'badge ' + label[1]));
+  else if (item.important) head.append(element('span', 'Importante', 'badge error'));
+  box.append(head);
+
+  const closed = item.state === 'done' || item.state === 'declined';
+  if (closed && item.state === 'done' && item.done_text) {
+    box.append(element('p', item.done_text, 'muted'));
+  }
+  const body = closed ? element('details') : box;
+  if (closed) {
+    body.append(element('summary', 'Perché e cosa proponevo'));
+    box.append(body);
+  }
+  body.append(
+    element('p', item.why),
+    element('p', item.proposal),
+    element('p', item.verify, 'advice-verify'),
+  );
+  if (item.refs.length) {
+    const refs = element('p', 'Riferimenti: ', 'advice-refs');
+    item.refs.forEach((r, i) => {
+      const a = element('a', r.law + ', ' + r.text);
+      a.href = r.url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      if (i) refs.append(' · ');
+      refs.append(a);
+    });
+    body.append(refs);
+  }
+
+  const actions = element('div', undefined, 'row advice-actions');
+  const choose = (labelText, choice, primary = false) => {
+    const b = element('button', labelText, primary ? 'primary' : '');
+    b.type = 'button';
+    b.addEventListener('click', () =>
+      perform(b, async () => {
+        await api('advice-choice', { name, id: item.id, choice });
+        await reload();
+      }),
+    );
+    return b;
+  };
+  if (closed || item.state === 'later') {
+    if (!compact) actions.append(choose('Rivedi', 'reopen'));
+  } else {
+    if (item.action === 'mask_ips' || item.action === 'retention') {
+      const b = element('button', item.action_label, 'primary');
+      b.type = 'button';
+      b.addEventListener('click', () =>
+        perform(b, async () => {
+          if (
+            item.action === 'mask_ips' &&
+            !confirm('Anche le righe già archiviate verranno mascherate, e non si potrà tornare indietro. Continuare?')
+          ) {
+            return;
+          }
+          const result = await api('advice-apply', { name, id: item.id });
+          showNotice(result.message);
+          await refresh();
+          await reload();
+        }),
+      );
+      actions.append(b);
+    } else if (item.action === 'open_privacy') {
+      actions.append(link(item.action_label, '#privacy', 'button primary'));
+    }
+    actions.append(
+      choose('Ho già provveduto', 'done'),
+      choose('Ricordamelo più tardi', 'later'),
+      choose('Non mi riguarda', 'declined'),
+    );
+  }
+  if (actions.children.length) box.append(actions);
+  return box;
+}
+
+// `compact`: solo i suggerimenti aperti (pannello dopo l'aggiunta di una sorgente).
+function renderAdvice(box, report, name, compact, reload) {
+  box.replaceChildren();
+  const items = compact ? report.items.filter((i) => i.state === 'open') : report.items;
+  if (compact && items.length === 0) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  const head = element('div', undefined, 'section-heading');
+  head.append(element('h3', compact ? 'Cosa ho trovato nel log «' + name + '»' : 'Dati personali in questo log'));
+  if (compact) {
+    const close = element('button', 'Chiudi');
+    close.type = 'button';
+    close.addEventListener('click', () => (box.hidden = true));
+    head.append(close);
+  }
+  box.append(head);
+  if (!report.findings) {
+    box.append(element('p', 'Sto aspettando le prime righe per capire cosa contiene questo log.', 'muted'));
+    return;
+  }
+  if (report.items.length === 0) {
+    const n = report.findings.lines_read;
+    box.append(element('p', (n === 1 ? 'Nell’ultima riga' : 'Nelle ultime ' + n + ' righe') + ' non ho trovato dati personali.', 'muted'));
+    return;
+  }
+  box.append(
+    element(
+      'p',
+      (report.findings.lines_read === 1 ? 'Ho guardato l’ultima riga.' : 'Ho guardato le ultime ' + report.findings.lines_read + ' righe.') +
+        ' Ecco cosa ti suggerisco: ' +
+        'ogni proposta si applica con un tasto, oppure scegli tu.',
+      'muted',
+    ),
+  );
+  const list = element('div', undefined, 'advice-list');
+  for (const item of items) list.append(adviceItem(item, name, compact, reload));
+  box.append(list);
+  const foot = element('div', undefined, 'advice-foot');
+  foot.append(element('p', report.disclaimer));
+  if (report.unverified) foot.append(element('p', report.unverified, 'advice-unverified'));
+  foot.append(element('p', 'Testi rivisti il ' + report.revised + '.'));
+  box.append(foot);
+}
+
+async function loadAdvice(name, box, compact) {
+  const reload = () => loadAdvice(name, box, compact);
+  try {
+    const report = await api('advice', { name });
+    rememberAdvice(name, report);
+    renderAdvice(box, report, name, compact, reload);
+    return report;
+  } catch (error) {
+    box.hidden = true;
+    return null;
+  }
+}
+
+// Dopo aver aggiunto una sorgente: aspetta le prime righe, poi mostra i suggerimenti aperti.
+async function watchNewSource(name) {
+  const run = ++adviceWatch;
+  adviceWatchSource = name;
+  const panel = $('advice-panel');
+  panel.hidden = true;
+  for (let i = 0; i < 40 && run === adviceWatch; i++) {
+    await sleep(3000);
+    if (run !== adviceWatch) return;
+    const report = await loadAdvice(name, panel, true);
+    if (!report || report.findings) return;
+    panel.hidden = true; // ancora nessuna riga: niente pannello vuoto
+  }
+}
+
+function rememberAdvice(name, report) {
+  const open = report.items.filter((i) => i.state === 'open');
+  adviceCache.set(name, { at: Date.now(), open: open.length, important: open.some((i) => i.important) });
+}
+
+// Una riga nella scheda della sorgente se ci sono suggerimenti aperti.
+function adviceNote(source) {
+  const note = element('p', undefined, 'advice-note admin-only');
+  note.hidden = true;
+  const show = (cached) => {
+    if (!cached || cached.open === 0) return;
+    note.replaceChildren(
+      link(
+        (cached.important ? '⚠ ' : '') +
+          (cached.open === 1 ? '1 suggerimento' : cached.open + ' suggerimenti') +
+          ' sui dati personali →',
+        '#settings/' + encodeURIComponent(source.source),
+        cached.important ? 'text-link advice-important' : 'text-link',
+      ),
+    );
+    note.hidden = false;
+  };
+  const cached = adviceCache.get(source.source);
+  show(cached);
+  if (!cached || Date.now() - cached.at > 60000) {
+    adviceCache.set(source.source, { ...(cached || { open: 0 }), at: Date.now() });
+    api('advice', { name: source.source })
+      .then((report) => {
+        rememberAdvice(source.source, report);
+        show(adviceCache.get(source.source));
+      })
+      .catch(() => {});
+  }
+  return note;
+}
+
 // ---------- statistiche ----------
 
 let statsSource = '';
@@ -1052,6 +1261,8 @@ function route() {
     } catch (_) {
       $('search-source').value = '';
     }
+    // Il pannello «Cosa ho trovato nel log» vale solo per la sorgente appena aggiunta.
+    if ($('search-source').value !== adviceWatchSource) $('advice-panel').hidden = true;
     renderLogStatus();
     search();
   } else if (view === 'sources') {
@@ -1244,6 +1455,7 @@ $('save-source').addEventListener('submit', (event) => {
     selected = null;
     location.hash = '#logs/' + encodeURIComponent(name);
     showNotice('Sorgente salvata. Sto leggendo i log: le righe compariranno qui da sole.');
+    watchNewSource(name);
     if (result.snippet) showCaddyDialog(result.snippet);
   });
 });
@@ -1347,6 +1559,7 @@ function populateSettings() {
   $('remove-source').disabled = !paused;
   $('replacement-container').replaceChildren(new Option('Carica prima l’elenco', ''));
   $('reconnect-connection').value = '';
+  loadAdvice(s.source, $('settings-advice'), false);
 }
 
 // Per i container: dove il runtime tiene i log e come limitarli.
