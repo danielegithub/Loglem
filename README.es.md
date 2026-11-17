@@ -25,7 +25,7 @@ Los registros se acumulan en muchos sitios. Nadie recuerda dónde están, cuánt
 - **Lo ves todo.** Una lista: cada fuente, dónde está, su tamaño, su estado.
 - **Eliges cuánto tiempo.** 28 días, 6 meses, 2 años, por fuente. Las copias viejas desaparecen solas.
 - **Puedes buscar.** Texto, fechas, IP, ruta, código de respuesta. También después de rotar el archivo o quitar el contenedor. Las líneas nuevas aparecen en directo.
-- **Es pequeño.** Un programa de unos 5 MB. Unos 10 MB de RAM. Sin servidor de base de datos, sin cuenta, sin nube. Tus registros se quedan en tu máquina.
+- **Es pequeño.** Un programa de unos 5 MB. Unos 8 MB de RAM en reposo (medidos en Linux). Sin servidor de base de datos, sin cuenta, sin nube. Tus registros se quedan en tu máquina.
 - **Es seguro por defecto.** Los archivos originales solo se leen. Borrarlos es opcional y está controlado (mira abajo).
 - **Es sencillo.** Una página web, un menú de terminal que funciona por SSH y comandos para scripts.
 - **Te dice qué falla.** Una fuente parada, un hueco en los registros, un disco lleno: lo ves, y `loglem check` avisa a tu monitor.

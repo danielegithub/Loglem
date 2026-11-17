@@ -25,7 +25,7 @@ Logs pile up in many places. Nobody remembers where they are, how big they are, 
 - **You see everything.** One list: every source, where it is, the size, the state.
 - **You choose how long.** 28 days, 6 months, 2 years, per source. Old copies disappear by themselves.
 - **You can search.** Text, dates, IP, path, status code. Also after the file was rotated or the container removed. New lines appear live.
-- **It stays small.** One program of about 5 MB. About 10 MB of RAM. No database server, no account, no cloud. Your logs stay on your machine.
+- **It stays small.** One program of about 5 MB. About 8 MB of RAM at rest (measured on Linux). No database server, no account, no cloud. Your logs stay on your machine.
 - **It is safe by default.** Original files are only read. Deleting them is optional and checked (see below).
 - **It is simple.** A web page, a terminal menu that works over SSH, and commands for scripts.
 - **It shows what went wrong.** A stopped source, a gap in the logs, a full disk: you see it, and `loglem check` tells your monitor.

@@ -25,7 +25,7 @@ I log si accumulano in tanti posti. Nessuno ricorda dove sono, quanto sono grand
 - **Vedi tutto.** Un elenco: ogni sorgente, dove si trova, la dimensione, lo stato.
 - **Scegli per quanto.** 28 giorni, 6 mesi, 2 anni, per sorgente. Le copie vecchie spariscono da sole.
 - **Puoi cercare.** Testo, date, IP, percorso, codice di risposta. Anche dopo che il file è stato ruotato o il container tolto. Le righe nuove compaiono in diretta.
-- **Resta piccolo.** Un programma di circa 5 MB. Circa 10 MB di RAM. Nessun server di database, nessun account, nessun cloud. I log restano sulla tua macchina.
+- **Resta piccolo.** Un programma di circa 5 MB. Circa 8 MB di RAM a riposo (misurati su Linux). Nessun server di database, nessun account, nessun cloud. I log restano sulla tua macchina.
 - **È sicuro di default.** I file originali vengono solo letti. Cancellarli è facoltativo e controllato (vedi sotto).
 - **È semplice.** Una pagina web, un menu nel terminale che funziona via SSH e comandi per gli script.
 - **Ti dice cosa è andato storto.** Una sorgente ferma, una lacuna nei log, un disco pieno: lo vedi, e `loglem check` lo dice al tuo monitor.

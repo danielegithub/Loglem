@@ -15,6 +15,7 @@ Ce que Loglem ne fait pas, ou ne promet pas.
 - Les filtres de gravité, de code et de chemin lisent le texte de la ligne. Ils connaissent Caddy (JSON), Nginx et Apache (combined) et le journal. Les autres formats ne se trouvent qu'en cherchant le texte.
 - Les statistiques marchent avec les journaux Caddy en JSON et Nginx/Apache au format combined.
 - Pas encore d'expressions régulières.
+- Les statistiques gardent en mémoire chaque IP et chaque page différentes de la période. Avec des journaux de millions d'IP différentes, il faut plus de RAM (environ 56 octets par IP ou page différente).
 
 ## Ce qui peut être perdu
 

@@ -15,6 +15,7 @@ Was Loglem nicht kann oder nicht verspricht.
 - Die Filter für Schweregrad, Statuscode und Pfad lesen den Text der Zeile. Sie kennen Caddy (JSON), Nginx und Apache (combined) und das Journal. Andere Formate findet man nur über den Text.
 - Statistiken funktionieren mit Caddy-Logs als JSON und Nginx/Apache im Format combined.
 - Reguläre Ausdrücke gibt es noch nicht.
+- Statistiken halten jede verschiedene IP und Seite des Zeitraums im Speicher. Bei Logs mit Millionen verschiedener IPs braucht es mehr RAM (etwa 56 Byte je verschiedene IP oder Seite).
 
 ## Was verloren gehen kann
 

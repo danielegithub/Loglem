@@ -25,7 +25,7 @@ Logs sammeln sich an vielen Orten. Niemand weiß, wo sie liegen, wie groß sie s
 - **Sie sehen alles.** Eine Liste: jede Quelle, wo sie liegt, die Größe, der Zustand.
 - **Sie bestimmen die Dauer.** 28 Tage, 6 Monate, 2 Jahre, je Quelle. Alte Kopien verschwinden von selbst.
 - **Sie können suchen.** Text, Datum, IP, Pfad, Statuscode. Auch nachdem die Datei rotiert oder der Container entfernt wurde. Neue Zeilen erscheinen live.
-- **Es bleibt klein.** Ein Programm von etwa 5 MB. Etwa 10 MB RAM. Kein Datenbankserver, kein Konto, keine Cloud. Ihre Logs bleiben auf Ihrer Maschine.
+- **Es bleibt klein.** Ein Programm von etwa 5 MB. Etwa 8 MB RAM im Ruhezustand (auf Linux gemessen). Kein Datenbankserver, kein Konto, keine Cloud. Ihre Logs bleiben auf Ihrer Maschine.
 - **Es ist standardmäßig sicher.** Originaldateien werden nur gelesen. Sie zu löschen ist optional und wird geprüft (siehe unten).
 - **Es ist einfach.** Eine Webseite, ein Terminalmenü, das über SSH funktioniert, und Befehle für Skripte.
 - **Es zeigt, was schiefläuft.** Eine gestoppte Quelle, eine Lücke in den Logs, eine volle Platte: Sie sehen es, und `loglem check` meldet es Ihrem Monitoring.

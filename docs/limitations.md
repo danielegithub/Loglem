@@ -15,6 +15,7 @@ What Loglem does not do, or does not promise.
 - Severity, status code and path filters read the text of the line. They know Caddy (JSON), Nginx and Apache (combined), and the journal. Other formats are only found by text.
 - Statistics work on Caddy JSON and Nginx/Apache combined logs.
 - No regular expressions yet.
+- Statistics keep every different IP and page of the period in memory. On logs with millions of different IPs they need more RAM (about 56 bytes per different IP or page).
 
 ## What can be lost
 

@@ -25,7 +25,7 @@ Os logs acumulam-se em muitos sítios. Ninguém se lembra de onde estão, de que
 - **Vê tudo.** Uma lista: cada fonte, onde está, o tamanho, o estado.
 - **Escolhe por quanto tempo.** 28 dias, 6 meses, 2 anos, por fonte. As cópias antigas desaparecem sozinhas.
 - **Pode pesquisar.** Texto, datas, IP, caminho, código de resposta. Mesmo depois de o ficheiro ser rodado ou o contentor removido. As linhas novas aparecem em direto.
-- **Fica pequeno.** Um programa de cerca de 5 MB. Cerca de 10 MB de RAM. Sem servidor de base de dados, sem conta, sem nuvem. Os logs ficam na sua máquina.
+- **Fica pequeno.** Um programa de cerca de 5 MB. Cerca de 8 MB de RAM em repouso (medidos em Linux). Sem servidor de base de dados, sem conta, sem nuvem. Os logs ficam na sua máquina.
 - **É seguro por defeito.** Os ficheiros originais só são lidos. Apagá-los é opcional e verificado (veja abaixo).
 - **É simples.** Uma página web, um menu de terminal que funciona por SSH e comandos para scripts.
 - **Mostra o que correu mal.** Uma fonte parada, uma falha nos logs, um disco cheio: vê-o, e o `loglem check` avisa o seu monitor.

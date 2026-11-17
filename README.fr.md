@@ -25,7 +25,7 @@ Les journaux s'accumulent partout. Personne ne sait où ils sont, quelle taille 
 - **Vous voyez tout.** Une liste : chaque source, où elle est, sa taille, son état.
 - **Vous choisissez la durée.** 28 jours, 6 mois, 2 ans, par source. Les vieilles copies disparaissent seules.
 - **Vous pouvez chercher.** Texte, dates, IP, chemin, code de réponse. Même après la rotation du fichier ou la suppression du conteneur. Les nouvelles lignes arrivent en direct.
-- **Il reste petit.** Un programme d'environ 5 Mo. Environ 10 Mo de RAM. Pas de serveur de base de données, pas de compte, pas de cloud. Vos journaux restent sur votre machine.
+- **Il reste petit.** Un programme d'environ 5 Mo. Environ 8 Mo de RAM au repos (mesurés sous Linux). Pas de serveur de base de données, pas de compte, pas de cloud. Vos journaux restent sur votre machine.
 - **Il est sûr par défaut.** Les fichiers d'origine sont seulement lus. Les supprimer est facultatif et contrôlé (voir plus bas).
 - **Il est simple.** Une page web, un menu terminal qui marche en SSH, et des commandes pour les scripts.
 - **Il montre ce qui va mal.** Une source arrêtée, un trou dans les journaux, un disque plein : vous le voyez, et `loglem check` prévient votre supervision.

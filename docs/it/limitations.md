@@ -15,6 +15,7 @@ Cosa Loglem non fa, o non promette.
 - I filtri per gravità, codice e percorso leggono il testo della riga. Conoscono Caddy (JSON), Nginx e Apache (combined) e il journal. Gli altri formati si trovano solo cercando il testo.
 - Le statistiche funzionano con i log di Caddy in JSON e di Nginx/Apache in formato combined.
 - Non ci sono ancora le espressioni regolari.
+- Le statistiche tengono in memoria ogni IP e ogni pagina diversi del periodo. Con log che hanno milioni di IP diversi serve più RAM (circa 56 byte per ogni IP o pagina diversi).
 
 ## Cosa si può perdere
 
