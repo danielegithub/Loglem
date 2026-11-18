@@ -1,0 +1,51 @@
+{
+  "id": "lighttpd",
+  "name": "Lighttpd",
+  "categories": [
+    "web"
+  ],
+  "recognize": {
+    "processes": [
+      "lighttpd"
+    ],
+    "configs": [
+      "/etc/lighttpd/lighttpd.conf"
+    ],
+    "units": [
+      "lighttpd.service"
+    ]
+  },
+  "logs": [
+    {
+      "path": "/var/log/lighttpd/access.log",
+      "kind": "access",
+      "format": "combined"
+    },
+    {
+      "path": "/var/log/lighttpd/error.log",
+      "kind": "error"
+    }
+  ],
+  "config": {
+    "reader": "directives",
+    "files": [
+      "/etc/lighttpd/lighttpd.conf"
+    ],
+    "logs": {
+      "accesslog.filename": "access",
+      "server.errorlog": "error"
+    }
+  },
+  "journal": {
+    "units": [
+      "lighttpd.service"
+    ]
+  },
+  "rotation": "logrotate",
+  "notes": {
+    "access": {
+      "it": "Attiva `mod_accesslog` e imposta `accesslog.filename = \"/var/log/lighttpd/access.log\"`, poi riavvia Lighttpd.",
+      "en": "Enable `mod_accesslog` and set `accesslog.filename = \"/var/log/lighttpd/access.log\"`, then restart Lighttpd."
+    }
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "id": "redis",
+  "name": "Redis",
+  "categories": [
+    "database"
+  ],
+  "recognize": {
+    "processes": [
+      "redis-server"
+    ],
+    "configs": [
+      "/etc/redis/redis.conf",
+      "/etc/redis.conf"
+    ],
+    "images": [
+      "redis",
+      "valkey"
+    ],
+    "units": [
+      "redis-server.service",
+      "redis.service"
+    ]
+  },
+  "logs": [
+    {
+      "path": "/var/log/redis/redis-server.log",
+      "kind": "database"
+    },
+    {
+      "path": "/var/log/redis/redis.log",
+      "kind": "database"
+    }
+  ],
+  "config": {
+    "reader": "directives",
+    "files": [
+      "/etc/redis/redis.conf",
+      "/etc/redis.conf"
+    ],
+    "logs": {
+      "logfile": "database"
+    }
+  },
+  "journal": {
+    "units": [
+      "redis-server.service",
+      "redis.service"
+    ]
+  },
+  "rotation": "logrotate"
+}

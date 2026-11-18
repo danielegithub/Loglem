@@ -1,0 +1,40 @@
+{
+  "id": "sshd",
+  "name": "Accessi SSH e sudo",
+  "categories": [
+    "admin"
+  ],
+  "recognize": {
+    "processes": [
+      "sshd"
+    ],
+    "configs": [
+      "/etc/ssh/sshd_config"
+    ],
+    "units": [
+      "ssh.service",
+      "sshd.service"
+    ]
+  },
+  "logs": [
+    {
+      "path": "/var/log/auth.log",
+      "kind": "admin_access",
+      "format": "syslog"
+    },
+    {
+      "path": "/var/log/secure",
+      "kind": "admin_access",
+      "format": "syslog"
+    }
+  ],
+  "journal": {
+    "identifiers": [
+      "sshd",
+      "sudo",
+      "su",
+      "login"
+    ]
+  },
+  "rotation": "logrotate"
+}

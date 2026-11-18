@@ -1,0 +1,31 @@
+{
+  "id": "fail2ban",
+  "name": "fail2ban",
+  "categories": [
+    "admin",
+    "system"
+  ],
+  "recognize": {
+    "processes": [
+      "fail2ban-server"
+    ],
+    "configs": [
+      "/etc/fail2ban/jail.conf"
+    ],
+    "units": [
+      "fail2ban.service"
+    ]
+  },
+  "logs": [
+    {
+      "path": "/var/log/fail2ban.log",
+      "kind": "system"
+    }
+  ],
+  "journal": {
+    "units": [
+      "fail2ban.service"
+    ]
+  },
+  "rotation": "logrotate"
+}

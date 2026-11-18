@@ -5,23 +5,18 @@ use crate::{
     service, sources, terminal, timestamps, update, util,
 };
 use anyhow::{bail, Context, Result};
-use clap::{Args, Parser, Subcommand};
+use std::io::IsTerminal;
+#[path = "commands.rs"]
+mod commands;
 use std::{fs, path::PathBuf};
 
-#[derive(Parser, Debug)]
-#[command(
-    name = "loglem",
-    version,
-    about = "Lightweight Event Manager — terminal log collection and search"
-)]
+#[derive(Debug)]
 pub struct Cli {
-    #[arg(long, env = "LOGLEM_DATA_DIR", global = true)]
     pub data_dir: Option<PathBuf>,
-    #[command(subcommand)]
     pub command: Option<Action>,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Debug)]
 pub enum Action {
     /// Read persistent Loglem errors, cause chains, and stack traces.
     Diagnostics,
@@ -29,33 +24,34 @@ pub enum Action {
     Web,
     /// Open the keyboard-driven terminal interface (also the default).
     Tui,
+    /// Il percorso guidato «Aggiungi» nel terminale.
+    Add,
     /// Create an empty configuration.
     Init,
+    /// Create, list or inspect sites and projects.
+    Site {
+        action: SiteAction,
+    },
     /// Configure sources without opening an interface.
     Source {
-        #[command(subcommand)]
         action: SourceAction,
     },
     /// List Podman containers and their pods.
     PodmanList {
-        #[arg(long)]
         connection: Option<String>,
     },
-    /// Cerca i log di Caddy, Nginx e Apache nelle loro configurazioni.
+    /// Cerca i log nella configurazione dei programmi conosciuti (src/recipes).
     Discover,
     /// Elenca i container Docker.
     DockerList {
-        #[arg(long)]
         context: Option<String>,
     },
     /// Elenca i pod di Kubernetes in tutti i namespace.
     KubernetesList {
-        #[arg(long)]
         context: Option<String>,
     },
     /// Show archive locations, sizes, dates, and collection status.
     Status {
-        #[arg(long)]
         json: bool,
     },
     /// Collect once and enforce archive retention.
@@ -64,77 +60,62 @@ pub enum Action {
     /// un problema: utilizzabile da cron, systemd o un programma di monitoraggio.
     Check {
         /// Una sorgente senza letture riuscite da più minuti di così è segnalata.
-        #[arg(long, default_value_t = crate::health::DEFAULT_MAX_MINUTES)]
         minutes: u64,
     },
     /// Mostra le righe nuove appena arrivano (in locale, o da un altro computer con --server).
     Tail {
         /// Solo questa sorgente.
-        #[arg(long)]
         source: Option<String>,
-        #[command(flatten)]
         query: crate::query::Query,
         /// Indirizzo della pagina web del server, es. http://10.0.0.1:8790
-        #[arg(long, requires = "user")]
         server: Option<String>,
         /// Utente con cui entrare nel server (la password viene chiesta).
-        #[arg(long)]
         user: Option<String>,
         /// Quante righe recenti mostrare prima della diretta (solo in locale).
-        #[arg(long, default_value_t = 10)]
         history: usize,
     },
     /// Copia coerente di configurazione e archivi in una cartella nuova.
-    Backup { target: PathBuf },
+    Backup {
+        target: PathBuf,
+    },
     /// Verifica un backup: impronte, integrità SQLite, righe. Esce con codice 1 se non è valido.
-    BackupVerify { target: PathBuf },
+    BackupVerify {
+        target: PathBuf,
+    },
     /// Ripristina un backup verificato (Loglem deve essere fermo).
     Restore {
         target: PathBuf,
         /// Sostituisce i dati attuali.
-        #[arg(long)]
         replace: bool,
     },
     /// Cancella i dati di una persona (GDPR art. 17) da tutte le sorgenti. Senza --apply mostra
     /// solo quante righe toccherebbe. Non tocca i file originali né i backup.
     Erase {
-        #[arg(long)]
         source: Option<String>,
-        #[command(flatten)]
         query: crate::query::Query,
         /// Perché si cancella, per il registro (es. «richiesta art. 17 del 17/11/2026, pratica 3»).
-        #[arg(long)]
         reason: Option<String>,
         /// Cancella anche dai file originali (solo file finiti e già archiviati).
-        #[arg(long)]
         originals: bool,
         /// Esegue davvero la cancellazione.
-        #[arg(long)]
         apply: bool,
     },
     /// Esporta i dati di una persona (GDPR art. 15) in un file di testo o JSON.
     Export {
-        #[arg(long)]
         source: Option<String>,
-        #[command(flatten)]
         query: crate::query::Query,
         /// File da creare (solo il proprietario lo legge). Senza, scrive a video.
-        #[arg(long)]
         output: Option<PathBuf>,
-        #[arg(long)]
         json: bool,
     },
     /// Chi ha cercato, esportato o cancellato, e quando (ultimi giorni).
     Audit {
-        #[arg(long, default_value_t = 30)]
         days: u32,
     },
     /// Statistiche di un log di accesso: richieste per giorno, pagine, codici, IP, lentezza.
     Stats {
         source: String,
-        #[arg(long, default_value_t = 7)]
         days: u32,
-        #[arg(long)]
         json: bool,
     },
     /// Cosa c'è nel log di una sorgente (IP, email, credenziali…) e cosa Loglem ti suggerisce,
@@ -142,32 +123,25 @@ pub enum Action {
     Advice {
         source: String,
         /// Applica la proposta di un suggerimento (es. --apply ip)
-        #[arg(long, conflicts_with = "choose")]
         apply: Option<String>,
         /// Registra una scelta: ID=done, ID=declined, ID=later o ID=reopen (es. --choose notice=done)
-        #[arg(long)]
         choose: Option<String>,
-        #[arg(long)]
         json: bool,
     },
     /// Modalità prova: sigillo giornaliero con impronte concatenate e verifica.
     Proof {
-        #[command(subcommand)]
         action: ProofAction,
     },
     /// Dati personali: mascheramento degli IP, campi JSON da tenere, rapporto.
     Privacy {
-        #[command(subcommand)]
         action: PrivacyAction,
     },
     /// Allarmi: regole, comando di notifica, «segna come visto».
     Alerts {
-        #[command(subcommand)]
         action: AlertsAction,
     },
     /// Accesso alla pagina web da altri computer: utenti e indirizzo.
     Access {
-        #[command(subcommand)]
         action: AccessAction,
     },
     /// Servizio: raccoglie i log e serve l'interfaccia web finché non riceve SIGINT o SIGTERM.
@@ -176,67 +150,82 @@ pub enum Action {
     Search(SearchArgs),
     /// Preview expired entries, or delete them with --apply.
     Prune {
-        #[arg(long)]
         apply: bool,
     },
     /// Archive a file explicitly handed off by a producer that has CLOSED it.
     ArchiveCompleted {
-        #[arg(long)]
         source: String,
-        #[arg(long)]
         file: PathBuf,
         /// Required: the producer will never write to this file again.
-        #[arg(long)]
         producer_closed: bool,
         /// Remove the completed original only after byte-for-byte verification.
-        #[arg(long)]
         remove: bool,
     },
     Config {
-        #[command(subcommand)]
         action: ConfigAction,
     },
     Service {
-        #[command(subcommand)]
         action: ServiceAction,
     },
     Update {
-        #[command(subcommand)]
         action: UpdateAction,
     },
     /// Test the executable and embedded SQLite schema without changing user data.
     SelfCheck,
-    #[command(name = "__apply-update", hide = true)]
-    ApplyUpdate { stage: PathBuf },
+    ApplyUpdate {
+        stage: PathBuf,
+    },
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Debug)]
+pub enum SiteAction {
+    Add {
+        name: String,
+    },
+    Rename {
+        id: String,
+        name: String,
+    },
+    Remove {
+        id: String,
+        with_logs: bool,
+    },
+    List,
+    Show {
+        id: String,
+    },
+    /// Count original locations and archives, and compare collected samples.
+    Copies {
+        id: String,
+    },
+    /// Compare the latest 200 rows per source. Include local files and services with --external.
+    Duplicates {
+        id: String,
+        external: bool,
+    },
+}
+
+#[derive(Debug)]
 pub enum SourceAction {
+    /// Assign a source to a site. Omit the site to clear the assignment.
+    AssignSite {
+        name: String,
+        site: String,
+    },
     /// Change display name, calendar retention, archive location, or source connection.
     Configure {
         name: String,
-        #[arg(long)]
         label: Option<String>,
-        #[arg(long, requires = "unit")]
         amount: Option<u32>,
-        #[arg(long, value_enum, requires = "amount")]
         unit: Option<crate::model::RetentionUnit>,
-        #[arg(long, value_enum)]
         log_kind: Option<crate::model::LogKind>,
-        #[arg(long)]
         archive_dir: Option<String>,
-        #[arg(long)]
         completed_dir: Option<String>,
-        #[arg(long)]
         handoff_confirmed: bool,
-        /// true: elimina i file ruotati dopo averli archiviati e verificati (es. Caddy).
-        #[arg(long)]
+        /// true: elimina i file ruotati dopo averli archiviati e verificati.
         remove_rotated: Option<bool>,
-        #[arg(long)]
         path: Option<PathBuf>,
-        #[arg(long)]
         container: Option<String>,
-        #[arg(long)]
         connection: Option<String>,
     },
     Rename {
@@ -257,122 +246,96 @@ pub enum SourceAction {
         name: String,
     },
     AddFolder {
-        #[arg(long)]
+        /// Site name or identifier.
+        site: String,
         name: String,
-        #[arg(long)]
         path: PathBuf,
-        #[arg(long, default_value_t = 28)]
         days: u32,
     },
     AddFile {
-        #[arg(long)]
+        /// Site name or identifier.
+        site: String,
         name: String,
-        #[arg(long)]
         path: PathBuf,
-        #[arg(long, default_value_t = 28)]
         days: u32,
-        #[arg(long)]
         rotated_pattern: Option<String>,
     },
     /// Journal di systemd, eventualmente solo alcuni servizi o programmi.
     AddJournal {
-        #[arg(long)]
+        /// Site name or identifier.
+        site: String,
         name: String,
         /// Servizio systemd da leggere (ripetibile), es. --unit caddy.service
-        #[arg(long = "unit")]
         units: Vec<String>,
         /// Programma syslog da leggere (ripetibile), es. --identifier sshd
-        #[arg(long = "identifier")]
         identifiers: Vec<String>,
         /// Campo del journal da confrontare (ripetibile), es. --match CONTAINER_NAME=web
-        #[arg(long = "match")]
         matches: Vec<String>,
         /// Un container Podman per nome: continua anche quando viene ricreato.
-        #[arg(long)]
         container: Option<String>,
         /// Solo voci fino a questa gravità: 0 emergenza … 3 errore … 7 debug
-        #[arg(long)]
         priority: Option<u8>,
-        #[arg(long, default_value_t = 28)]
         days: u32,
     },
-    /// Log di accesso di Caddy: legge anche i file ruotati e li elimina dopo averli verificati.
+    /// Log di accesso di Caddy: legge il file attivo e i file ruotati.
     AddCaddy {
-        #[arg(long)]
+        /// Site name or identifier.
+        site: String,
         name: String,
         /// Il file su cui scrive Caddy, es. /var/log/caddy/access.log
-        #[arg(long)]
         path: PathBuf,
-        #[arg(long, default_value_t = 28)]
         days: u32,
     },
     /// Container Docker (nome o identificativo).
     AddDocker {
-        #[arg(long)]
+        /// Site name or identifier.
+        site: String,
         name: String,
-        #[arg(long)]
         container: String,
-        #[arg(long)]
         context: Option<String>,
-        #[arg(long, default_value_t = 28)]
         days: u32,
     },
     /// Kubernetes: un pod (--pod) oppure i pod con un'etichetta (--selector app=web),
     /// che continua a funzionare quando i pod vengono ricreati.
     AddKubernetes {
-        #[arg(long)]
+        /// Site name or identifier.
+        site: String,
         name: String,
-        #[arg(long)]
         namespace: String,
-        #[arg(long)]
         pod: Option<String>,
-        #[arg(long)]
         selector: Option<String>,
-        #[arg(long)]
         container: Option<String>,
-        #[arg(long)]
         context: Option<String>,
-        #[arg(long, default_value_t = 28)]
         days: u32,
     },
     AddPodman {
-        #[arg(long)]
+        /// Site name or identifier.
+        site: String,
         name: String,
-        #[arg(long)]
         container: String,
-        #[arg(long, default_value_t = 28)]
         days: u32,
-        #[arg(long)]
         connection: Option<String>,
     },
     List,
     Set {
         name: String,
-        #[arg(long)]
         days: Option<u32>,
-        #[arg(long, action=clap::ArgAction::Set)]
         enabled: Option<bool>,
     },
 }
 
-#[derive(Args, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct SearchArgs {
-    #[arg(long)]
     pub source: Option<String>,
-    #[command(flatten)]
     pub query: crate::query::Query,
-    #[arg(long)]
     pub from: Option<String>,
     /// YYYY-MM-DD includes that entire day; a full timestamp is an exclusive upper bound.
-    #[arg(long)]
     pub to: Option<String>,
-    #[arg(long, default_value_t=100, value_parser=clap::value_parser!(u16).range(1..=1000))]
     pub limit: u16,
-    #[arg(long)]
     pub json: bool,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Debug)]
 pub enum ConfigAction {
     Export {
         output: PathBuf,
@@ -388,13 +351,12 @@ pub enum ConfigAction {
         port: u16,
     },
 }
-#[derive(Subcommand, Debug)]
+#[derive(Debug)]
 pub enum ProofAction {
     /// Attiva la modalità prova per una sorgente.
     Enable {
         source: String,
         /// Autorità di marca temporale RFC 3161, es. https://freetsa.org/tsr
-        #[arg(long)]
         tsa: Option<String>,
     },
     /// Disattiva la modalità prova (il registro già scritto resta).
@@ -402,59 +364,65 @@ pub enum ProofAction {
     /// Verifica i giorni sigillati. Con --archive e --chain verifica una copia.
     Verify {
         source: Option<String>,
-        #[arg(long, requires = "chain")]
         archive: Option<PathBuf>,
-        #[arg(long)]
         chain: Option<PathBuf>,
     },
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Debug)]
 pub enum PrivacyAction {
     /// Imposta le tutele di una sorgente. --mask-ips-after-days 0 = subito; vuoto = mai.
     Set {
         source: String,
-        #[arg(long)]
         mask_ips_after_days: Option<u32>,
         /// Smette di mascherare gli IP.
-        #[arg(long, conflicts_with = "mask_ips_after_days")]
         no_mask: bool,
         /// Campi JSON da tenere, separati da virgola (es. request.uri,status). Vuoto = tutti.
-        #[arg(long)]
         keep_fields: Option<String>,
     },
     /// Cosa si conserva, per quanto e con quali tutele (per il registro delle conservazioni).
     Report,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Debug)]
 pub enum AlertsAction {
     /// Elenca regole, comando di notifica e problemi attuali con il loro nome.
     List,
+    /// Mostra o cambia il controllo automatico (acceso/spento, ogni quanti minuti).
+    Monitor {
+        enabled: Option<bool>,
+        minutes: Option<u32>,
+    },
+    /// Attiva gli avvisi per mail con Resend. La chiave si legge dalla tastiera.
+    EmailSet {
+        from: String,
+        to: Vec<String>,
+        page_url: Option<String>,
+        hourly_limit: Option<u32>,
+    },
+    /// Manda una mail di prova.
+    EmailTest,
+    /// Spegne gli avvisi per mail e cancella la chiave.
+    EmailOff,
+    /// Mostra come sono configurati gli avvisi per mail (mai la chiave).
+    EmailShow,
     /// Allarme se un testo compare almeno COUNT volte in MINUTES minuti.
     AddPattern {
         name: String,
-        #[arg(long)]
         text: String,
-        #[arg(long)]
         count: u32,
-        #[arg(long)]
         minutes: u32,
-        #[arg(long)]
         source: Option<String>,
     },
     /// Allarme se l'archivio supera MEGABYTES.
     AddSize {
         name: String,
-        #[arg(long)]
         megabytes: u64,
-        #[arg(long)]
         source: Option<String>,
     },
     /// Allarme se sul disco dei dati restano meno di MEGABYTES liberi.
     AddFreeSpace {
         name: String,
-        #[arg(long)]
         megabytes: u64,
     },
     Remove {
@@ -470,12 +438,11 @@ pub enum AlertsAction {
     },
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Debug)]
 pub enum AccessAction {
     /// Crea un utente, o cambia password e ruolo di uno esistente. La password viene chiesta.
     UserAdd {
         name: String,
-        #[arg(long, value_enum, default_value = "admin")]
         role: crate::access::Role,
     },
     /// Elimina un utente; le sue sessioni aperte si chiudono subito.
@@ -485,32 +452,29 @@ pub enum AccessAction {
     /// Pubblica la pagina dietro un reverse proxy (Caddy, Nginx…). Richiede almeno un utente.
     Proxy {
         /// Indirizzo del proxy da cui accettare X-Forwarded-For/-Proto (ripetibile).
-        #[arg(long = "trust")]
         trust: Vec<std::net::IpAddr>,
         /// Prefisso se il proxy non lo toglie, es. /loglem. Vuoto = nessuno.
-        #[arg(long)]
         base_path: Option<String>,
     },
     /// Dove ascoltare: «local» (solo questo computer), un IP di questo computer
     /// (es. quello della VPN) o 0.0.0.0. Vale dal prossimo avvio.
     Address { address: String },
 }
-#[derive(Subcommand, Debug)]
+#[derive(Debug)]
 pub enum ServiceAction {
     Install {
-        #[arg(long)]
         start: bool,
     },
+    /// Toglie il servizio (i dati restano).
+    Uninstall,
     Start,
     Stop,
     Status,
 }
-#[derive(Subcommand, Debug)]
+#[derive(Debug)]
 pub enum UpdateAction {
     Configure {
-        #[arg(long)]
         repository: String,
-        #[arg(long)]
         public_key: String,
     },
     Check,
@@ -518,12 +482,18 @@ pub enum UpdateAction {
     Status,
 }
 
+pub(crate) use commands::command as parse_command;
+
 pub fn run(cli: Cli) -> Result<()> {
     if matches!(cli.command, Some(Action::SelfCheck)) {
         let db = rusqlite::Connection::open_in_memory()?;
         db.execute_batch(include_str!("schema.sql"))?;
         crate::advice::check_catalogs()?;
-        println!("Loglem {}: executable and SQLite schema OK", crate::VERSION);
+        let recipes = crate::recipes::validate_all()?;
+        println!(
+            "Loglem {}: executable, SQLite schema and {recipes} recipes OK",
+            crate::VERSION
+        );
         return Ok(());
     }
     let dir = match cli.data_dir {
@@ -555,13 +525,81 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
         }
         Action::Web => crate::web::serve(dir),
         Action::Tui => terminal::run(dir),
+        Action::Add => terminal::add(dir),
         Action::Init => {
             config::edit(dir, |_| Ok(()))?;
             println!("Configuration: {}", dir.join("config.json").display());
             Ok(())
         }
+        Action::Site { action } => {
+            match action {
+                SiteAction::Add { name } => println!("{}", config::add_site(dir, &name)?),
+                SiteAction::Rename { id, name } => {
+                    config::rename_site(dir, &id, &name)?;
+                    println!("Sito rinominato in «{name}».");
+                }
+                SiteAction::Remove { id, with_logs } => {
+                    let (_, logs) = config::site_sources(dir, &id)?;
+                    if with_logs && !logs.is_empty() {
+                        println!(
+                            "Elimino il sito e {} log con tutto il loro storico: {}",
+                            logs.len(),
+                            logs.join(", ")
+                        );
+                        if std::io::stdin().is_terminal() {
+                            let answer =
+                                crate::terminal::ask_line("Scrivi «elimina» per confermare: ")?;
+                            anyhow::ensure!(
+                                answer.trim() == "elimina",
+                                "Annullato: niente è stato eliminato"
+                            );
+                        }
+                    }
+                    let removed = config::remove_site(dir, &id, with_logs)?;
+                    println!("Sito eliminato ({} log tolti).", removed.len());
+                }
+                SiteAction::List => {
+                    for site in config::load(dir)?.sites.values() {
+                        println!("{}\t{}", site.id, util::safe_text(&site.name));
+                    }
+                }
+                SiteAction::Copies { id }
+                | SiteAction::Duplicates {
+                    id,
+                    external: false,
+                } => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&crate::copies::report(dir, &id, false)?)?
+                    );
+                }
+                SiteAction::Duplicates { id, external: true } => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&crate::copies::report(dir, &id, true)?)?
+                    );
+                }
+                SiteAction::Show { id } => {
+                    let collector::SiteStatus {
+                        sites,
+                        sources: rows,
+                        ..
+                    } = collector::statuses_with_sites(dir)?;
+                    let site = sites.get(&id).context("Sito inesistente")?;
+                    let logs: Vec<_> = rows.into_iter().filter(|s| s.site == id).collect();
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(
+                            &serde_json::json!({"site": site, "logs": logs})
+                        )?
+                    );
+                }
+            }
+            Ok(())
+        }
         Action::Source { action } => {
             match action {
+                SourceAction::AssignSite { name, site } => config::assign(dir, &name, &site)?,
                 SourceAction::Configure {
                     name,
                     label,
@@ -646,7 +684,12 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
                     );
                     println!("Sorgente {name} eliminata, con il suo storico.");
                 }
-                SourceAction::AddFolder { name, path, days } => {
+                SourceAction::AddFolder {
+                    site,
+                    name,
+                    path,
+                    days,
+                } => {
                     let path = fs::canonicalize(path).context("Choose an existing folder")?;
                     if !path.is_dir() {
                         bail!("Choose a folder");
@@ -655,14 +698,19 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
                         dir,
                         Source {
                             id: name,
-                            retention_days: days,
+                            site,
+                            retention: crate::model::Retention::days(days),
                             enabled: true,
-                            input: Input::Folder { path },
+                            input: Input::Folder {
+                                path,
+                                pattern: None,
+                            },
                             ..Source::default()
                         },
                     )?;
                 }
                 SourceAction::AddJournal {
+                    site,
                     name,
                     units,
                     identifiers,
@@ -682,23 +730,33 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
                         dir,
                         Source {
                             id: name,
-                            retention_days: days,
+                            site,
+                            retention: crate::model::Retention::days(days),
                             input: Input::Journal(filter),
                             ..Source::default()
                         },
                     )?;
                 }
-                SourceAction::AddCaddy { name, path, days } => {
+                SourceAction::AddCaddy {
+                    site,
+                    name,
+                    path,
+                    days,
+                } => {
                     let retention = crate::model::Retention {
                         amount: days,
                         unit: crate::model::RetentionUnit::Days,
                     };
-                    let source = crate::management::caddy_source(name, &path, retention)?;
-                    let snippet = crate::management::caddy_snippet(&path);
+                    // Comando deprecato: un log di accesso è un file come gli altri.
+                    let mut source = crate::management::file_source(name, &path, retention)?;
+                    source.site = site;
+                    source.log_kind = crate::model::LogKind::Access;
                     config::add(dir, source)?;
-                    println!("Sorgente Caddy aggiunta. Nel Caddyfile usa questo blocco log:\n\n{snippet}");
+                    eprintln!("Nota: «source add-caddy» è deprecato, usa «source add-file».");
+                    println!("Sorgente aggiunta.");
                 }
                 SourceAction::AddFile {
+                    site,
                     name,
                     path,
                     days,
@@ -709,7 +767,8 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
                         dir,
                         Source {
                             id: name,
-                            retention_days: days,
+                            site,
+                            retention: crate::model::Retention::days(days),
                             enabled: true,
                             input: Input::File {
                                 path,
@@ -720,6 +779,7 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
                     )?;
                 }
                 SourceAction::AddPodman {
+                    site,
                     name,
                     container,
                     days,
@@ -733,7 +793,8 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
                         dir,
                         Source {
                             id: name,
-                            retention_days: days,
+                            site,
+                            retention: crate::model::Retention::days(days),
                             enabled: true,
                             input: Input::Podman {
                                 container: found.id,
@@ -744,6 +805,7 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
                     )?;
                 }
                 SourceAction::AddDocker {
+                    site,
                     name,
                     container,
                     context,
@@ -758,7 +820,8 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
                         dir,
                         Source {
                             id: name,
-                            retention_days: days,
+                            site,
+                            retention: crate::model::Retention::days(days),
                             input: Input::Docker {
                                 container: found.id,
                                 context,
@@ -768,6 +831,7 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
                     )?;
                 }
                 SourceAction::AddKubernetes {
+                    site,
                     name,
                     namespace,
                     pod,
@@ -788,7 +852,8 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
                         dir,
                         Source {
                             id: name,
-                            retention_days: days,
+                            site,
+                            retention: crate::model::Retention::days(days),
                             input: Input::Kubernetes(target),
                             ..Source::default()
                         },
@@ -809,8 +874,7 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
                         .find(|s| s.id == name)
                         .context("Source not found")?;
                     if let Some(days) = days {
-                        source.retention_days = days;
-                        source.retention = None;
+                        source.retention = crate::model::Retention::days(days);
                     }
                     if let Some(enabled) = enabled {
                         source.enabled = enabled;
@@ -865,6 +929,7 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
             if json {
                 println!("{}", serde_json::to_string_pretty(&statuses)?);
             } else {
+                println!("{}\n", crate::monitor::line(dir));
                 println!("{}", terminal::status_text(&statuses));
             }
             Ok(())
@@ -1186,12 +1251,12 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
                     continue;
                 }
                 let mut archive = Archive::open(&path)?;
-                let cutoff = source.period().cutoff(now);
+                let cutoff = source.retention.cutoff(now);
                 let count = if apply {
                     archive.retain_since(cutoff)? as i64
                 } else {
                     archive.db.query_row(
-                        "SELECT count(*) FROM entries WHERE event_ns<?1 OR collected_ns<?1",
+                        "SELECT count(*) FROM log_rows WHERE event_ns<?1 OR collected_ns<?1",
                         [cutoff],
                         |r| r.get(0),
                     )?
@@ -1239,11 +1304,10 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
                     util::atomic_write(&output, &serde_json::to_vec_pretty(&config::load(dir)?)?)?
                 }
                 ConfigAction::Import { file } => {
-                    if fs::metadata(&file)?.len() > 1024 * 1024 {
+                    if fs::metadata(&file)?.len() > config::MAX_CONFIG_BYTES {
                         bail!("Configuration file is too large");
                     }
-                    let imported = serde_json::from_slice(&fs::read(file)?)?;
-                    config::validate(&imported)?;
+                    let imported = config::decode(serde_json::from_slice(&fs::read(file)?)?)?;
                     config::edit(dir, |c| {
                         *c = imported;
                         Ok(())
@@ -1266,7 +1330,15 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
             Ok(())
         }
         Action::Service { action } => match action {
-            ServiceAction::Install { start } => service::install(dir, start),
+            ServiceAction::Install { start } => {
+                println!("{}", service::install(dir, start)?.text());
+                Ok(())
+            }
+            ServiceAction::Uninstall => {
+                service::uninstall(dir)?;
+                println!("Servizio tolto. I dati e le impostazioni di Loglem sono rimasti.");
+                Ok(())
+            }
             ServiceAction::Start => service::start(),
             ServiceAction::Stop => service::stop(),
             ServiceAction::Status => {
@@ -1402,6 +1474,85 @@ fn alerts_command(dir: &std::path::Path, action: AlertsAction) -> Result<()> {
         })
     };
     match action {
+        AlertsAction::Monitor { enabled, minutes } => {
+            if enabled.is_some() || minutes.is_some() {
+                crate::monitor::configure(dir, enabled, minutes)?;
+            }
+            println!("{}", crate::monitor::line(dir));
+            let s = config::load(dir)?.alerts.monitor;
+            println!(
+                "Impostazioni: {}, ogni {} minuti.",
+                if s.enabled { "acceso" } else { "spento" },
+                s.minutes
+            );
+        }
+        AlertsAction::EmailSet {
+            from,
+            to,
+            page_url,
+            hourly_limit,
+        } => {
+            let key = match std::env::var("LOGLEM_RESEND_KEY") {
+                Ok(key) => key,
+                Err(_) => crate::access::read_hidden("Chiave di Resend (non viene mostrata): ")?,
+            };
+            crate::email::configure(
+                dir,
+                crate::email::Settings {
+                    from,
+                    to,
+                    page_url,
+                    hourly_limit: hourly_limit.unwrap_or(6),
+                },
+                Some(&key),
+            )?;
+            println!("Avvisi per mail salvati. Prova con: loglem alerts email-test");
+        }
+        AlertsAction::EmailTest => {
+            crate::email::send_test(dir)?;
+            println!("Mail di prova partita. Controlla la casella di posta.");
+        }
+        AlertsAction::EmailOff => {
+            crate::email::disable(dir)?;
+            println!("Avvisi per mail spenti e chiave cancellata.");
+        }
+        AlertsAction::EmailShow => {
+            let s = crate::email::status(dir)?;
+            if !s.configured {
+                println!("Avvisi per mail: non configurati.");
+            } else {
+                println!(
+                    "Avvisi per mail: {}",
+                    if s.active {
+                        "attivi"
+                    } else {
+                        "configurati ma senza chiave"
+                    }
+                );
+                println!(
+                    "Mittente: {}\nDestinatari: {}\nLimite: {} mail all'ora",
+                    s.from,
+                    s.to.join(", "),
+                    s.hourly_limit
+                );
+                println!(
+                    "Chiave: {}",
+                    if s.key_set {
+                        "salvata (non si può rileggere)"
+                    } else {
+                        "mancante"
+                    }
+                );
+                if let Some(last) = s.last {
+                    println!(
+                        "Ultimo invio: {} · {}{}",
+                        last.at,
+                        if last.ok { "riuscito" } else { "NON riuscito" },
+                        last.error.map(|e| format!(" · {e}")).unwrap_or_default()
+                    );
+                }
+            }
+        }
         AlertsAction::List => {
             let config = config::load(dir)?;
             if config.alerts.rules.is_empty() {

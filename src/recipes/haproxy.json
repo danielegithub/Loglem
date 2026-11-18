@@ -1,0 +1,43 @@
+{
+  "id": "haproxy",
+  "name": "HAProxy",
+  "categories": [
+    "web"
+  ],
+  "recognize": {
+    "processes": [
+      "haproxy"
+    ],
+    "configs": [
+      "/etc/haproxy/haproxy.cfg"
+    ],
+    "images": [
+      "haproxy"
+    ],
+    "units": [
+      "haproxy.service"
+    ]
+  },
+  "logs": [
+    {
+      "path": "/var/log/haproxy.log",
+      "kind": "access",
+      "format": "syslog"
+    }
+  ],
+  "journal": {
+    "units": [
+      "haproxy.service"
+    ],
+    "identifiers": [
+      "haproxy"
+    ]
+  },
+  "rotation": "logrotate",
+  "notes": {
+    "access": {
+      "it": "Nel `frontend` aggiungi `option httplog` e nella sezione `global` `log /dev/log local0`: rsyslog di solito scrive in /var/log/haproxy.log.",
+      "en": "In the `frontend` add `option httplog` and in `global` `log /dev/log local0`: rsyslog usually writes to /var/log/haproxy.log."
+    }
+  }
+}

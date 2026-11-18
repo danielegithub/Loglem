@@ -1,0 +1,66 @@
+{
+  "id": "nginx",
+  "name": "Nginx",
+  "categories": [
+    "web"
+  ],
+  "recognize": {
+    "processes": [
+      "nginx"
+    ],
+    "configs": [
+      "/etc/nginx/nginx.conf",
+      "/usr/local/etc/nginx/nginx.conf"
+    ],
+    "images": [
+      "nginx"
+    ],
+    "units": [
+      "nginx.service"
+    ]
+  },
+  "logs": [
+    {
+      "path": "/var/log/nginx/access.log",
+      "kind": "access",
+      "format": "combined"
+    },
+    {
+      "path": "/var/log/nginx/error.log",
+      "kind": "error"
+    }
+  ],
+  "config": {
+    "reader": "directives",
+    "files": [
+      "/etc/nginx/nginx.conf",
+      "/usr/local/etc/nginx/nginx.conf"
+    ],
+    "logs": {
+      "access_log": "access",
+      "error_log": "error"
+    },
+    "hosts": [
+      "server_name"
+    ],
+    "blocks": [
+      "server"
+    ]
+  },
+  "journal": {
+    "units": [
+      "nginx.service"
+    ]
+  },
+  "rotation": "logrotate",
+  "notes": {
+    "access": {
+      "it": "Nel blocco `server` del sito aggiungi `access_log /var/log/nginx/NOME.access.log;`, poi ricarica Nginx con `nginx -s reload`.",
+      "en": "In the site's `server` block add `access_log /var/log/nginx/NAME.access.log;`, then reload Nginx with `nginx -s reload`."
+    },
+    "error": {
+      "it": "Nel blocco `server` del sito aggiungi `error_log /var/log/nginx/NOME.error.log;`, poi ricarica Nginx.",
+      "en": "In the site's `server` block add `error_log /var/log/nginx/NAME.error.log;`, then reload Nginx."
+    }
+  }
+}

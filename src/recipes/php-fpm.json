@@ -1,0 +1,34 @@
+{
+  "id": "php-fpm",
+  "name": "PHP-FPM",
+  "categories": [
+    "app"
+  ],
+  "recognize": {
+    "processes": [
+      "php-fpm"
+    ],
+    "configs": [
+      "/etc/php"
+    ],
+    "images": [
+      "php"
+    ]
+  },
+  "logs": [
+    {
+      "path": "/var/log/php*-fpm.log",
+      "kind": "application"
+    },
+    {
+      "path": "/var/log/php-fpm/*.log",
+      "kind": "application"
+    }
+  ],
+  "journal": {
+    "identifiers": [
+      "php-fpm"
+    ]
+  },
+  "rotation": "logrotate"
+}

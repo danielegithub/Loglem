@@ -1,0 +1,59 @@
+{
+  "id": "traefik",
+  "name": "Traefik",
+  "categories": [
+    "web"
+  ],
+  "recognize": {
+    "processes": [
+      "traefik"
+    ],
+    "configs": [
+      "/etc/traefik/traefik.yml",
+      "/etc/traefik/traefik.yaml",
+      "/etc/traefik/traefik.toml",
+      "/etc/traefik/traefik.json"
+    ],
+    "images": [
+      "traefik"
+    ],
+    "units": [
+      "traefik.service"
+    ]
+  },
+  "logs": [
+    {
+      "path": "/var/log/traefik/access.log",
+      "kind": "access",
+      "format": "json"
+    },
+    {
+      "path": "/var/log/traefik/traefik.log",
+      "kind": "error"
+    }
+  ],
+  "config": {
+    "reader": "traefik",
+    "files": [
+      "/etc/traefik/traefik.yml",
+      "/etc/traefik/traefik.yaml",
+      "/etc/traefik/traefik.toml",
+      "/etc/traefik/traefik.json"
+    ]
+  },
+  "journal": {
+    "units": [
+      "traefik.service"
+    ]
+  },
+  "notes": {
+    "access": {
+      "it": "Nella configurazione statica attiva `accessLog` con `filePath: /var/log/traefik/access.log` e `format: json`, poi riavvia Traefik.",
+      "en": "In the static configuration enable `accessLog` with `filePath: /var/log/traefik/access.log` and `format: json`, then restart Traefik."
+    },
+    "error": {
+      "it": "Nella configurazione statica imposta `log.filePath: /var/log/traefik/traefik.log`, poi riavvia Traefik.",
+      "en": "In the static configuration set `log.filePath: /var/log/traefik/traefik.log`, then restart Traefik."
+    }
+  }
+}

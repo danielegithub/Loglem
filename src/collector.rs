@@ -11,17 +11,27 @@ use std::{collections::HashMap, fs, path::Path};
 pub fn once(dir: &Path) -> Result<()> {
     util::private_dir(dir)?;
     let _lock = util::Lock::acquire(&dir.join("collector.lock"))?;
-    cycle(dir)
+    let result = cycle(dir);
+    crate::memory::trim();
+    result
 }
 
 fn cycle(dir: &Path) -> Result<()> {
     let _access = util::DataAccess::read(dir)?;
     let config = config::load(dir)?;
     let mut failures = Vec::new();
+    let mut journals = sources::journal::collect_shared(dir, &config.sources);
     for source in &config.sources {
         let path = config::archive_path(dir, &source.id);
-        let result = Archive::open(&path)
-            .and_then(|mut archive| collect_source(dir, &mut archive, source, config.poll_seconds));
+        let result = Archive::open(&path).and_then(|mut archive| {
+            collect_source(
+                dir,
+                &mut archive,
+                source,
+                config.poll_seconds,
+                journals.remove(&source.id),
+            )
+        });
         if let Err(error) = result {
             if let Ok(archive) = Archive::open(&path) {
                 let _ = archive.set_state("phase", "error");
@@ -52,12 +62,14 @@ fn collect_source(
     archive: &mut Archive,
     source: &Source,
     poll_seconds: u64,
+    journal: Option<Result<usize>>,
 ) -> Result<()> {
     archive.set_state("source_definition", &serde_json::to_string(&source.input)?)?;
     let now = timestamps::now_ns();
+    sources::retention::refresh(archive, source, now)?;
     archive.set_state("phase", "collecting")?;
     // La scadenza vale anche per le sorgenti in pausa: la pausa non allunga la conservazione.
-    let cutoff = source.period().cutoff(now);
+    let cutoff = source.retention.cutoff(now);
     if !source.enabled || source.detached {
         expire(dir, archive, source, cutoff, now)?;
         archive.set_state("phase", "paused")?;
@@ -69,11 +81,14 @@ fn collect_source(
         .and_then(|s| s.parse::<i64>().ok())
         .filter(|last| now - last > stop_threshold(poll_seconds));
 
-    let collected = read_source(archive, source, now, cutoff, stopped_since);
+    let collected =
+        journal.unwrap_or_else(|| read_source(archive, source, now, cutoff, stopped_since));
     // Prima la scadenza: un problema con la lettura o con gli originali non deve bloccarla.
     crate::privacy::apply(archive, &source.privacy, now)?;
     crate::proof::seal(dir, source, archive, now)?;
     expire(dir, archive, source, cutoff, now)?;
+    crate::stats::refresh(archive)?;
+    archive.compress_closed()?;
     let count = match collected {
         Ok(count) => count,
         Err(error) => {
@@ -98,6 +113,9 @@ fn collect_source(
         }
         None => format!("Lettura completata; {count} nuove righe"),
     };
+    if count > 0 {
+        crate::formats::refresh(archive, now)?;
+    }
     let warning = match crate::management::cleanup_originals(source, archive) {
         Ok(cleanup) => {
             if cleanup.removed > 0 {
@@ -113,7 +131,7 @@ fn collect_source(
         }
         Err(error) => Some(format!("Pulizia degli originali non riuscita: {error:#}")),
     };
-    let warning = [warning, caddy_margin(source)]
+    let warning = [warning, rotation_margin(source)]
         .into_iter()
         .flatten()
         .collect::<Vec<_>>()
@@ -126,8 +144,9 @@ fn collect_source(
     Ok(())
 }
 
-/// Per i log di Caddy: avvisa se le regole di rotazione nel Caddyfile lasciano poco margine.
-fn caddy_margin(source: &Source) -> Option<String> {
+/// Se il programma stesso ruota il file (lo dice la sua configurazione), avvisa quando le
+/// sue regole lasciano poco margine a Loglem per leggere i file ruotati.
+fn rotation_margin(source: &Source) -> Option<String> {
     let Input::File {
         path,
         rotated_pattern: Some(pattern),
@@ -138,13 +157,13 @@ fn caddy_margin(source: &Source) -> Option<String> {
     if !source.remove_rotated {
         return None;
     }
-    let roll = crate::discover::caddy_roll_for(path)?;
+    let (recipe, roll) = crate::recipes::rotation_for(path)?;
     // I ruotati ancora presenti sono quelli non letti o in attesa delle 24 ore.
     let rotated = sources::file::candidates(path, Some(pattern))
         .ok()?
         .len()
         .saturating_sub(1);
-    crate::discover::caddy_margin_warning(&roll, rotated)
+    crate::discover::roll_margin_warning(&recipe.name, &roll, rotated)
 }
 
 /// Toglie le copie scadute. In modalità prova solo giorni interi già sigillati.
@@ -165,9 +184,8 @@ fn read_source(
     stopped_since: Option<i64>,
 ) -> Result<usize> {
     match &source.input {
-        Input::Folder { path } => {
-            let mut files = sources::file::folder_files(path)?;
-            files.extend(sources::file::compressed_in_folder(path)?);
+        Input::Folder { path, pattern } => {
+            let files = sources::file::archive_inputs_in_folder(path, pattern.as_deref())?;
             note_vanished_files(archive, &files, stopped_since, now)?;
             let mut added = 0;
             let mut errors = Vec::new();
@@ -291,14 +309,59 @@ fn recent_recovery(store: &Archive) -> Result<Option<String>> {
 }
 
 pub fn statuses(dir: &Path) -> Result<Vec<SourceStatus>> {
+    Ok(statuses_with_sites(dir)?.sources)
+}
+
+#[derive(Default, serde::Serialize)]
+pub(crate) struct OriginalSpace {
+    bytes: u64,
+    partial: bool,
+    #[serde(skip)]
+    seen: std::collections::HashSet<String>,
+}
+
+impl OriginalSpace {
+    fn measure(&mut self, paths: Result<Vec<std::path::PathBuf>>) -> Option<u64> {
+        let mut bytes = 0;
+        let mut seen = std::collections::HashSet::new();
+        let mut complete = true;
+        for path in paths.ok()? {
+            let Some(meta) = fs::symlink_metadata(&path).ok().filter(|m| m.is_file()) else {
+                complete = false;
+                continue;
+            };
+            let key = crate::copies::file_key(&path, &meta);
+            if self.seen.insert(key.clone()) {
+                self.bytes += meta.len();
+            }
+            if seen.insert(key) {
+                bytes += meta.len();
+            }
+        }
+        complete.then_some(bytes)
+    }
+}
+
+pub(crate) struct SiteStatus {
+    pub sites: std::collections::BTreeMap<String, crate::model::Site>,
+    pub sources: Vec<SourceStatus>,
+    pub originals: HashMap<String, OriginalSpace>,
+}
+
+pub(crate) fn statuses_with_sites(dir: &Path) -> Result<SiteStatus> {
     let _access = util::DataAccess::read(dir)?;
-    config::load(dir)?
+    let config = config::load(dir)?;
+    let mut originals: HashMap<String, OriginalSpace> = HashMap::new();
+    let rows = config
         .sources
         .into_iter()
         .map(|source| {
-            let archive_path = config::archive_path(dir, &source.id);
-            let (count, earliest, last, status) = if archive_path.exists() {
-                let store = Archive::open(&archive_path)?;
+            let archive_path = source.archive_path(dir);
+            let store = archive_path
+                .is_file()
+                .then(|| Archive::open_reader(&archive_path))
+                .transpose()?;
+            let (count, earliest, last, status) = if let Some(store) = &store {
                 let (count, earliest) = store.stats()?;
                 let last = store
                     .get_state("last_success")?
@@ -311,16 +374,21 @@ pub fn statuses(dir: &Path) -> Result<Vec<SourceStatus>> {
             } else {
                 (0, None, None, "Non ancora letta".into())
             };
+            let space = originals.entry(source.site.clone()).or_default();
             let (origin, bytes) = match &source.input {
-                Input::Folder { path } => {
-                    let bytes = sources::file::folder_files(path).ok().and_then(|files| {
-                        files
-                            .iter()
-                            .map(|p| fs::metadata(p).ok().map(|m| m.len()))
-                            .sum::<Option<u64>>()
-                    });
+                Input::Folder { path, pattern } => {
+                    let bytes = space.measure(sources::file::archive_inputs_in_folder(
+                        path,
+                        pattern.as_deref(),
+                    ));
                     (
-                        format!("{} (file .log nella cartella)", path.display()),
+                        format!(
+                            "{} (file {} nella cartella)",
+                            path.display(),
+                            pattern
+                                .as_deref()
+                                .unwrap_or(sources::file::DEFAULT_FOLDER_PATTERN)
+                        ),
                         bytes,
                     )
                 }
@@ -328,15 +396,8 @@ pub fn statuses(dir: &Path) -> Result<Vec<SourceStatus>> {
                     path,
                     rotated_pattern,
                 } => {
-                    let bytes = sources::file::candidates(path, rotated_pattern.as_deref())
-                        .ok()
-                        .and_then(|paths| {
-                            paths
-                                .iter()
-                                .map(|p| fs::metadata(p).map(|m| m.len()).ok())
-                                .collect::<Option<Vec<_>>>()
-                        })
-                        .map(|sizes| sizes.iter().sum());
+                    let bytes =
+                        space.measure(sources::file::candidates(path, rotated_pattern.as_deref()));
                     (path.display().to_string(), bytes)
                 }
                 Input::Journal(filter) => {
@@ -362,21 +423,42 @@ pub fn statuses(dir: &Path) -> Result<Vec<SourceStatus>> {
                     None,
                 ),
             };
-            let (phase, error, warning, gaps, recovery) = if archive_path.exists() {
-                let store = Archive::open(&archive_path)?;
+            space.partial |= bytes.is_none();
+            let (phase, error, warning, gaps, recovery) = if let Some(store) = &store {
                 (
                     store
                         .get_state("phase")?
                         .unwrap_or_else(|| "waiting".into()),
                     store.get_state("error")?.filter(|s| !s.is_empty()),
-                    warnings(&store)?,
-                    gap_statuses(&store)?,
-                    recent_recovery(&store)?,
+                    warnings(store)?,
+                    gap_statuses(store)?,
+                    recent_recovery(store)?,
                 )
             } else {
                 ("waiting".into(), None, None, Vec::new(), None)
             };
+            // Solo controlli veloci: lo stato si chiede ogni pochi secondi.
+            let program = source
+                .program
+                .as_deref()
+                .and_then(crate::recipes::get)
+                .or_else(|| match &source.input {
+                    Input::File { path, .. } | Input::Folder { path, .. } => {
+                        crate::recipes::typical(path).map(|(r, _)| r)
+                    }
+                    Input::Journal(filter) => {
+                        crate::recipes::for_journal(&filter.units, &filter.identifiers)
+                    }
+                    _ => None,
+                })
+                .map(|r| r.name.clone());
+            let format = store
+                .as_ref()
+                .and_then(crate::formats::saved)
+                .map(|f| f.label().to_owned());
             Ok(SourceStatus {
+                program,
+                format,
                 journal_runtime: source.journal_runtime,
                 class: source.class.clone(),
                 site: source.site.clone(),
@@ -384,7 +466,7 @@ pub fn statuses(dir: &Path) -> Result<Vec<SourceStatus>> {
                 input: source.input.clone(),
                 archive_dir: source.archive_dir.clone(),
                 label: source.label.clone().unwrap_or_else(|| source.id.clone()),
-                retention: source.period(),
+                retention: source.retention,
                 log_kind: source.log_kind,
                 detached: source.detached,
                 completed_dir: source.completed_dir.clone(),
@@ -404,10 +486,18 @@ pub fn statuses(dir: &Path) -> Result<Vec<SourceStatus>> {
                 earliest,
                 last_collection: last,
                 message: status,
-                retention_days: source.retention_days,
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    // File identities are needed only while aggregating this snapshot.
+    for space in originals.values_mut() {
+        space.seen = Default::default();
+    }
+    Ok(SiteStatus {
+        sites: config.sites,
+        sources: rows,
+        originals,
+    })
 }
 
 pub fn search(

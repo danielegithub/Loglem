@@ -11,7 +11,7 @@ use std::{process::Command, time::Duration};
 /// Quali voci del journal leggere. Liste vuote = nessun filtro.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Filter {
-    /// Servizi systemd, es. `caddy.service`.
+    /// Servizi systemd, es. `myapp.service`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub units: Vec<String>,
     /// Identificatori syslog, es. `sshd` o `sudo`.
@@ -159,6 +159,10 @@ pub fn units() -> Result<Vec<String>> {
 /// Trasforma una riga JSON di journalctl in una voce dell'archivio.
 fn decode(line: &[u8], now: i64) -> Result<(String, Entry)> {
     let value: Value = serde_json::from_slice(line).context("journalctl non ha restituito JSON")?;
+    decode_value(&value, now)
+}
+
+fn decode_value(value: &Value, now: i64) -> Result<(String, Entry)> {
     let field = |name: &str| value.get(name).and_then(Value::as_str);
     let cursor = field("__CURSOR")
         .context("Voce del journal senza cursore")?
@@ -208,14 +212,20 @@ fn message_text(value: Option<&Value>) -> String {
     }
 }
 
-pub fn collect(store: &mut Archive, filter: &Filter, now: i64, earliest: i64) -> Result<usize> {
+fn resume(
+    store: &Archive,
+    filter: &Filter,
+    now: i64,
+    earliest: i64,
+    partial_view: bool,
+) -> Result<i64> {
     let cursor = store.get_state(CURSOR)?.filter(|c| !c.is_empty());
     // Le lacune nascono quando Loglem resta spento: basta controllare una volta per avvio.
     // L'esito resta salvato fino al controllo successivo.
     let this_run = std::process::id().to_string();
     let checked = store.get_state(GAP_CHECKED)?.as_deref() == Some(this_run.as_str());
     // Se non si vede tutto il journal, una voce che manca non è per forza stata eliminata.
-    let partial_view = sees_only_own_entries();
+
     if let (Some(cursor), false) = (&cursor, checked) {
         if !partial_view && !cursor_still_available(cursor, filter)? {
             let from = cursor_time(cursor).unwrap_or(0).saturating_mul(1000);
@@ -227,7 +237,6 @@ pub fn collect(store: &mut Archive, filter: &Filter, now: i64, earliest: i64) ->
         }
         store.set_state(GAP_CHECKED, &this_run)?;
     }
-    let mut warnings = Vec::new();
 
     // Si riparte dall'istante dell'ultima voce letta, non dal cursore: se il journal
     // ha eliminato quella voce, `--after-cursor` non restituirebbe più nulla.
@@ -238,6 +247,13 @@ pub fn collect(store: &mut Archive, filter: &Filter, now: i64, earliest: i64) ->
         .map(|micros| micros / 1_000_000)
         .unwrap_or(0)
         .max(earliest.max(0) / 1_000_000_000);
+    Ok(since_seconds)
+}
+
+pub fn collect(store: &mut Archive, filter: &Filter, now: i64, earliest: i64) -> Result<usize> {
+    let partial_view = sees_only_own_entries();
+    let since_seconds = resume(store, filter, now, earliest, partial_view)?;
+    let mut warnings = Vec::new();
     let mut command = journalctl();
     command.args(["--output=json", "--no-pager"]);
     command.arg(format!("--since=@{since_seconds}"));
@@ -349,4 +365,184 @@ fn cursor_time(cursor: &str) -> Option<i64> {
         .split(';')
         .find_map(|part| part.strip_prefix("t="))
         .and_then(|hex| i64::from_str_radix(hex, 16).ok())
+}
+
+fn selected(f: &Filter, row: &Value) -> bool {
+    let has = |key: &str, value: &str| {
+        row[key].as_str() == Some(value)
+            || row[key]
+                .as_array()
+                .is_some_and(|vs| vs.iter().any(|v| v.as_str() == Some(value)))
+    };
+    let units = f.units.is_empty()
+        || f.units.iter().any(|unit| {
+            let unit = if unit.contains('.') {
+                unit.clone()
+            } else {
+                format!("{unit}.service")
+            };
+            let pattern = glob::Pattern::new(&unit).ok();
+            let matched = |key: &str| {
+                row[key]
+                    .as_str()
+                    .is_some_and(|v| pattern.as_ref().is_some_and(|p| p.matches(v)))
+            };
+            matched("_SYSTEMD_UNIT")
+                || (has("_PID", "1") && matched("UNIT"))
+                || (has("_UID", "0")
+                    && (matched("OBJECT_SYSTEMD_UNIT") || matched("COREDUMP_UNIT")))
+        });
+    units
+        && (f.identifiers.is_empty() || f.identifiers.iter().any(|id| has("SYSLOG_IDENTIFIER", id)))
+        && f.priority.is_none_or(|p| {
+            row["PRIORITY"]
+                .as_str()
+                .and_then(|s| s.parse::<u8>().ok())
+                .is_some_and(|v| v <= p)
+        })
+        && f.matches
+            .iter()
+            .filter_map(|m| m.split_once('='))
+            .all(|(key, _)| {
+                f.matches
+                    .iter()
+                    .filter_map(|m| m.split_once('='))
+                    .any(|(k, v)| k == key && has(k, v))
+            })
+}
+
+struct Subscriber<'a> {
+    id: &'a str,
+    filter: &'a Filter,
+    path: std::path::PathBuf,
+    since: i64,
+    earliest: i64,
+    batch: Vec<Entry>,
+    last: Option<(String, i64)>,
+    added: usize,
+}
+impl Subscriber<'_> {
+    fn flush(&mut self) -> Result<()> {
+        if self.last.is_some() {
+            let mut db = Archive::open(&self.path)?;
+            self.added += save(&mut db, &mut self.batch, self.last.as_ref())?;
+            self.last = None;
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn collect_shared(
+    dir: &std::path::Path,
+    sources: &[crate::model::Source],
+) -> std::collections::HashMap<String, Result<usize>> {
+    let mut results = std::collections::HashMap::new();
+    let mut subscriptions = Vec::new();
+    let now = crate::timestamps::now_ns();
+    let journals: Vec<_> = sources
+        .iter()
+        .filter_map(|s| match &s.input {
+            crate::model::Input::Journal(f) if s.enabled && !s.detached => Some((s, f)),
+            _ => None,
+        })
+        .collect();
+    if journals.len() < 2 {
+        return results;
+    }
+    let partial = sees_only_own_entries();
+    for (s, f) in journals {
+        let path = s.archive_path(dir);
+        let earliest = s.retention.cutoff(now);
+        match Archive::open(&path).and_then(|db| resume(&db, f, now, earliest, partial)) {
+            Ok(since) => subscriptions.push(Subscriber {
+                id: &s.id,
+                filter: f,
+                path,
+                since,
+                earliest,
+                batch: vec![],
+                last: None,
+                added: 0,
+            }),
+            Err(e) => {
+                results.insert(s.id.clone(), Err(e));
+            }
+        }
+    }
+    let Some(since) = subscriptions.iter().map(|s| s.since).min() else {
+        return results;
+    };
+    let mut command = journalctl();
+    command
+        .args(["--output=json", "--no-pager"])
+        .arg(format!("--since=@{since}"));
+    // Narrow the union with a necessary field for each subscription when possible.
+    if subscriptions
+        .iter()
+        .all(|s| !s.filter.matches.is_empty() || !s.filter.identifiers.is_empty())
+    {
+        for (i, s) in subscriptions.iter().enumerate() {
+            if i > 0 {
+                command.arg("+");
+            }
+            if !s.filter.matches.is_empty() {
+                command.args(&s.filter.matches);
+            } else {
+                command.args(
+                    s.filter
+                        .identifiers
+                        .iter()
+                        .map(|v| format!("SYSLOG_IDENTIFIER={v}")),
+                );
+            }
+        }
+    }
+    let mut used = 0;
+    let mut count = 0;
+    let mut warning = partial;
+    let result = process::stream(&mut command, Duration::from_secs(120), |stderr, line| {
+        if stderr {
+            let msg = String::from_utf8_lossy(&line);
+            warning |= msg.contains("insufficient permissions") || msg.contains("other users");
+            return Ok(());
+        }
+        let row: Value = serde_json::from_slice(&line)?;
+        let (cursor, entry) = decode_value(&row, now)?;
+        for sub in &mut subscriptions {
+            if entry.event_ns < sub.earliest
+                || entry.event_ns / 1_000_000_000 < sub.since
+                || !selected(sub.filter, &row)
+            {
+                continue;
+            }
+            used += entry.message.len();
+            count += 1;
+            sub.batch.push(entry.clone());
+            sub.last = Some((cursor.clone(), entry.event_ns / 1000));
+            if used >= 1024 * 1024 || count >= BATCH_SIZE {
+                sub.flush()?;
+            }
+        }
+        if used >= 1024 * 1024 || count >= BATCH_SIZE {
+            for s in &mut subscriptions {
+                s.flush()?;
+            }
+            used = 0;
+            count = 0;
+        }
+        Ok(())
+    })
+    .and_then(|s| {
+        anyhow::ensure!(s.success(), "Lettura del journal interrotta");
+        Ok(())
+    });
+    for mut sub in subscriptions {
+        let value=sub.flush().and_then(|_|{
+            if let Err(e)=&result {bail!("{e:#}");}
+            Archive::open(&sub.path)?.set_state(WARNING,if warning {"Loglem vede solo una parte del journal. Controlla i permessi del gruppo systemd-journal."} else {""})?;
+            Ok(sub.added)
+        });
+        results.insert(sub.id.to_owned(), value);
+    }
+    results
 }

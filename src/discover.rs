@@ -1,179 +1,193 @@
-//! Ricerca automatica dei log: legge le configurazioni di Caddy, Nginx e Apache e
-//! propone i file trovati, da aggiungere con un clic.
+//! Ricerca automatica dei log: per ogni ricetta (`src/recipes/`) legge i file di
+//! configurazione indicati e propone i log che vi compaiono. Qui non c'è nessun programma
+//! scritto nel codice: i nomi delle direttive e dei file arrivano dalle ricette.
 //!
 //! È una lettura semplice delle direttive principali, non un interprete completo:
 //! variabili, import e percorsi relativi complessi possono sfuggire.
+use crate::{
+    model::LogKind,
+    recipes::{self, ConfigLog, ConfigSpec, Roll},
+};
 use serde::Serialize;
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
-/// Configurazioni cercate, nell'ordine in cui le installano i pacchetti più comuni.
-const CADDYFILES: &[&str] = &["/etc/caddy/Caddyfile", "/usr/local/etc/Caddyfile"];
-const NGINX: &[&str] = &["/etc/nginx/nginx.conf", "/usr/local/etc/nginx/nginx.conf"];
-const APACHE: &[&str] = &[
-    "/etc/apache2/apache2.conf",
-    "/etc/httpd/conf/httpd.conf",
-    "/usr/local/etc/httpd/httpd.conf",
-];
-
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Found {
-    /// `caddy` (con gestione dei file ruotati) oppure `file`.
-    pub kind: &'static str,
-    pub program: &'static str,
+    /// Il programma che lo scrive (nome della ricetta), solo come etichetta.
+    pub program: String,
+    pub recipe: String,
     pub path: PathBuf,
+    pub log_kind: LogKind,
     /// Dove è stato trovato: il file di configurazione.
     pub from: PathBuf,
     pub exists: bool,
 }
 
-/// Le impostazioni di rotazione di un log di Caddy.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct CaddyRoll {
-    pub keep: Option<u32>,
-    pub keep_for_days: Option<f64>,
-}
-
-/// Percorsi da controllare: quello indicato nella variabile d'ambiente (installazioni in
-/// posti non standard), poi quelli abituali.
-fn locations(variable: &str, defaults: &[&str]) -> Vec<String> {
-    std::env::var(variable)
-        .into_iter()
-        .chain(defaults.iter().map(|s| s.to_string()))
-        .collect()
-}
-
-fn as_str(list: &[String]) -> Vec<&str> {
-    list.iter().map(String::as_str).collect()
-}
-
 /// Tutti i log trovati nelle configurazioni presenti su questo computer.
 pub fn find_all() -> Vec<Found> {
-    let caddy = locations("LOGLEM_CADDYFILE", CADDYFILES);
-    let nginx = locations("LOGLEM_NGINX_CONF", NGINX);
-    let apache = locations("LOGLEM_APACHE_CONF", APACHE);
-    let mut found = find_in(&as_str(&caddy), &as_str(&nginx), &as_str(&apache));
-    for conf in locations(
-        "LOGLEM_TRAEFIK_CONF",
-        &[
-            "/etc/traefik/traefik.yaml",
-            "/etc/traefik/traefik.yml",
-            "/etc/traefik/traefik.toml",
-            "/etc/traefik/traefik.json",
-        ],
-    ) {
-        let file = Path::new(&conf);
-        if !file.is_file() {
-            continue;
-        }
-        let text = read(file);
-        let mut access = false;
-        let mut path = None;
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
-            path = value["accessLog"]["filePath"].as_str().map(PathBuf::from);
-        } else {
-            for raw in text.lines() {
-                let line = raw.split('#').next().unwrap_or("").trim();
-                if line.is_empty() {
-                    continue;
-                }
-                if line.starts_with('[')
-                    || (!raw.starts_with(char::is_whitespace) && line.ends_with(':'))
-                {
-                    access = line.eq_ignore_ascii_case("[accesslog]")
-                        || line.eq_ignore_ascii_case("accessLog:");
-                } else if access {
-                    if let Some((key, value)) = line.split_once([':', '=']) {
-                        if key.trim().eq_ignore_ascii_case("filePath") {
-                            path = Some(PathBuf::from(
-                                value.trim().trim_matches(['"', char::from(39)]),
-                            ));
-                        }
-                    }
-                }
+    let mut found: Vec<Found> = Vec::new();
+    for recipe in recipes::all() {
+        for log in recipes::config_logs(recipe) {
+            if found.iter().any(|f| f.path == log.path) {
+                continue;
             }
-        }
-        if let Some(path) = path.filter(|p| p.is_absolute()) {
-            found.push(entry("file", "Traefik", path, file));
+            found.push(Found {
+                program: recipe.name.clone(),
+                recipe: recipe.id.clone(),
+                exists: log.path.is_file(),
+                log_kind: log.kind,
+                path: log.path,
+                from: log.from,
+            });
         }
     }
     found
-}
-
-pub fn find_in(caddyfiles: &[&str], nginx: &[&str], apache: &[&str]) -> Vec<Found> {
-    let mut found = Vec::new();
-    for config in existing(caddyfiles) {
-        for (path, _) in caddy_logs(&read(&config)) {
-            found.push(entry("caddy", "Caddy", path, &config));
-        }
-    }
-    for config in existing(nginx) {
-        for path in directive_paths(&with_includes(&config), &["access_log", "error_log"]) {
-            found.push(entry("file", "Nginx", path, &config));
-        }
-    }
-    for config in existing(apache) {
-        for path in directive_paths(&with_includes(&config), &["CustomLog", "ErrorLog"]) {
-            found.push(entry("file", "Apache", path, &config));
-        }
-    }
-    found.dedup_by(|a, b| a.path == b.path);
-    found
-}
-
-fn entry(kind: &'static str, program: &'static str, path: PathBuf, from: &Path) -> Found {
-    Found {
-        kind,
-        program,
-        exists: path.is_file(),
-        path,
-        from: from.to_owned(),
-    }
-}
-
-fn existing(paths: &[&str]) -> Vec<PathBuf> {
-    paths
-        .iter()
-        .map(PathBuf::from)
-        .filter(|p| p.is_file())
-        .collect()
 }
 
 fn read(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_default()
 }
 
-// ---------- Caddy ----------
-
-/// I log `output file …` di un Caddyfile, con le impostazioni di rotazione.
-pub fn caddy_logs(caddyfile: &str) -> Vec<(PathBuf, CaddyRoll)> {
-    let mut logs = Vec::new();
-    let lines: Vec<&str> = caddyfile
-        .lines()
-        .map(|l| l.split('#').next().unwrap_or("").trim())
-        .collect();
-    for (i, line) in lines.iter().enumerate() {
-        let words: Vec<&str> = line.split_whitespace().collect();
-        if words.len() < 3 || words[0] != "output" || words[1] != "file" {
-            continue;
-        }
-        let mut roll = CaddyRoll::default();
-        if words.last() == Some(&"{") {
-            // Le opzioni roll_* seguono fino alla graffa di chiusura.
-            for option in lines[i + 1..].iter().take_while(|l| !l.starts_with('}')) {
-                let parts: Vec<&str> = option.split_whitespace().collect();
-                match parts.as_slice() {
-                    ["roll_keep", n] => roll.keep = n.parse().ok(),
-                    ["roll_keep_for", d] => roll.keep_for_days = parse_duration_days(d),
-                    _ => {}
+/// Il file di configurazione più quelli richiamati con `include`/`Include` (un livello di
+/// profondità, con i caratteri jolly `*`).
+pub(crate) fn with_includes(config: &Path) -> String {
+    let text = read(config);
+    let base = config.parent().unwrap_or(Path::new("/"));
+    let mut all = text.clone();
+    for line in text.lines() {
+        let words: Vec<&str> = line
+            .trim()
+            .trim_end_matches(';')
+            .split_whitespace()
+            .collect();
+        if let [directive, pattern, ..] = words.as_slice() {
+            let directive = directive.to_ascii_lowercase();
+            if directive == "include"
+                || directive == "includeoptional"
+                || directive == "!includedir"
+            {
+                let pattern = pattern.trim_matches('"');
+                let pattern = if pattern.starts_with('/') {
+                    pattern.to_string()
+                } else {
+                    base.join(pattern).display().to_string()
+                };
+                let pattern = if directive == "!includedir" {
+                    format!("{pattern}/*")
+                } else {
+                    pattern
+                };
+                for path in glob::glob(&pattern).into_iter().flatten().flatten() {
+                    all.push('\n');
+                    all.push_str(&read(&path));
                 }
             }
         }
-        logs.push((PathBuf::from(words[2].trim_matches('"')), roll));
     }
-    logs
+    all
+}
+
+/// Variabili d'ambiente comuni nei file di configurazione, con il loro valore abituale.
+fn expand_variables(value: &str) -> String {
+    value
+        .replace("${APACHE_LOG_DIR}", "/var/log/apache2")
+        .replace("$APACHE_LOG_DIR", "/var/log/apache2")
+}
+
+/// Toglie dal nome di un sito schema, porta e punto finale: `https://Example.com:443/` → `example.com`.
+pub fn clean_host(host: &str) -> String {
+    let host = host
+        .trim()
+        .trim_matches(['"', '\'', ',', ';'])
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    let host = host.split('/').next().unwrap_or(host);
+    let host = match host.rsplit_once(':') {
+        Some((h, port)) if port.chars().all(|c| c.is_ascii_digit()) => h,
+        _ => host,
+    };
+    host.trim_end_matches('.').to_ascii_lowercase()
+}
+
+/// Lettore generico «direttiva valore»: anche `chiave = valore` e `chiave=valore`. I blocchi
+/// (es. `server {` o `<VirtualHost`) separano i siti: un log prende i nomi del suo blocco.
+pub(crate) fn directives(text: &str, spec: &ConfigSpec) -> Vec<ConfigLog> {
+    struct Pending {
+        path: PathBuf,
+        kind: LogKind,
+    }
+    let mut out = Vec::new();
+    let mut hosts: Vec<String> = Vec::new();
+    let mut pending: Vec<Pending> = Vec::new();
+    let flush = |hosts: &mut Vec<String>, pending: &mut Vec<Pending>, out: &mut Vec<ConfigLog>| {
+        for p in pending.drain(..) {
+            out.push(ConfigLog {
+                path: p.path,
+                kind: p.kind,
+                hosts: hosts.clone(),
+                from: PathBuf::new(),
+                roll: None,
+            });
+        }
+        hosts.clear();
+    };
+    for raw in text.lines() {
+        let line = raw
+            .split('#')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .trim_end_matches(';');
+        if line.is_empty() {
+            continue;
+        }
+        let starts_block = spec.blocks.iter().any(|b| {
+            line.strip_prefix(b.as_str())
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with([' ', '{', '>', '\t']))
+        });
+        if starts_block {
+            flush(&mut hosts, &mut pending, &mut out);
+            continue;
+        }
+        let (key, rest) = match line.split_once(['=', ' ', '\t']) {
+            Some((k, r)) => (k.trim(), r.trim().trim_start_matches('=').trim()),
+            None => continue,
+        };
+        if spec.hosts.iter().any(|h| h.eq_ignore_ascii_case(key)) {
+            hosts.extend(
+                rest.split_whitespace()
+                    .map(clean_host)
+                    .filter(|h| !h.is_empty() && h != "_" && h != "localhost"),
+            );
+            continue;
+        }
+        let Some(kind) = spec
+            .logs
+            .iter()
+            .find(|(d, _)| d.eq_ignore_ascii_case(key))
+            .map(|(_, k)| *k)
+        else {
+            continue;
+        };
+        let value = expand_variables(
+            rest.split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_matches(['"', '\'']),
+        );
+        // `off`, `syslog:` e pipe come `|/usr/bin/rotatelogs` non sono file.
+        if value.starts_with('/') && !pending.iter().any(|p| p.path == Path::new(&value)) {
+            pending.push(Pending {
+                path: PathBuf::from(value),
+                kind,
+            });
+        }
+    }
+    flush(&mut hosts, &mut pending, &mut out);
+    out
 }
 
 /// `60d`, `720h`, `90m` → giorni.
@@ -188,93 +202,203 @@ fn parse_duration_days(text: &str) -> Option<f64> {
     })
 }
 
-/// Impostazioni di rotazione con cui Caddy scrive questo log, se il Caddyfile lo dice.
-pub fn caddy_roll_for(log: &Path) -> Option<CaddyRoll> {
-    caddy_roll_in(&as_str(&locations("LOGLEM_CADDYFILE", CADDYFILES)), log)
+/// Lettore dei file a blocchi con l'indirizzo del sito in testa (formato Caddyfile):
+/// `example.com { log { output file /percorso { roll_keep 10 } } }`.
+pub(crate) fn caddyfile(text: &str) -> Vec<ConfigLog> {
+    let lines: Vec<&str> = text
+        .lines()
+        .map(|l| l.split('#').next().unwrap_or("").trim())
+        .collect();
+    let mut logs = Vec::new();
+    let mut depth = 0i32;
+    let mut hosts: Vec<String> = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        if depth == 0 && line.ends_with('{') {
+            let head = line.trim_end_matches('{').trim();
+            // `{` da solo = opzioni globali; `(nome)` = frammento riusabile.
+            hosts = if head.is_empty() || head.starts_with('(') {
+                vec![]
+            } else {
+                head.split([',', ' '])
+                    .map(clean_host)
+                    .filter(|h| !h.is_empty())
+                    .collect()
+            };
+        }
+        let words: Vec<&str> = line.split_whitespace().collect();
+        if words.len() >= 3 && words[0] == "output" && words[1] == "file" {
+            let mut roll = Roll::default();
+            if words.last() == Some(&"{") {
+                for option in lines[i + 1..].iter().take_while(|l| !l.starts_with('}')) {
+                    match option.split_whitespace().collect::<Vec<_>>().as_slice() {
+                        ["roll_keep", n] => roll.keep = n.parse().ok(),
+                        ["roll_keep_for", d] => roll.keep_for_days = parse_duration_days(d),
+                        _ => {}
+                    }
+                }
+            }
+            logs.push(ConfigLog {
+                path: PathBuf::from(words[2].trim_matches('"')),
+                kind: LogKind::Access,
+                hosts: hosts.clone(),
+                from: PathBuf::new(),
+                roll: Some(roll),
+            });
+        }
+        depth += line.matches('{').count() as i32 - line.matches('}').count() as i32;
+        if depth <= 0 {
+            depth = 0;
+        }
+    }
+    logs
 }
 
-pub fn caddy_roll_in(caddyfiles: &[&str], log: &Path) -> Option<CaddyRoll> {
-    existing(caddyfiles)
-        .iter()
-        .flat_map(|config| caddy_logs(&read(config)))
-        .find(|(path, _)| path == log)
-        .map(|(_, roll)| roll)
+/// Lettore della configurazione statica in YAML, TOML o JSON con le sezioni `accessLog` e
+/// `log` (formato Traefik).
+pub(crate) fn traefik(text: &str) -> Vec<ConfigLog> {
+    let mut found: Vec<(LogKind, String)> = Vec::new();
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
+        for (section, kind) in [("accessLog", LogKind::Access), ("log", LogKind::Error)] {
+            if let Some(path) = value[section]["filePath"].as_str() {
+                found.push((kind, path.to_owned()));
+            }
+        }
+    } else {
+        let mut section: Option<LogKind> = None;
+        for raw in text.lines() {
+            let line = raw.split('#').next().unwrap_or("").trim();
+            if line.is_empty() {
+                continue;
+            }
+            if line.starts_with('[')
+                || (!raw.starts_with(char::is_whitespace) && line.ends_with(':'))
+            {
+                let name = line.trim_matches(['[', ']', ':']).to_ascii_lowercase();
+                section = match name.as_str() {
+                    "accesslog" => Some(LogKind::Access),
+                    "log" => Some(LogKind::Error),
+                    _ => None,
+                };
+            } else if let Some(kind) = section {
+                if let Some((key, value)) = line.split_once([':', '=']) {
+                    if key.trim().eq_ignore_ascii_case("filePath") {
+                        found.push((kind, value.trim().trim_matches(['"', '\'']).to_owned()));
+                    }
+                }
+            }
+        }
+    }
+    found
+        .into_iter()
+        .filter(|(_, p)| p.starts_with('/'))
+        .map(|(kind, path)| ConfigLog {
+            path: PathBuf::from(path),
+            kind,
+            hosts: vec![],
+            from: PathBuf::new(),
+            roll: None,
+        })
+        .collect()
 }
 
-/// Caddy cancella da sé i file ruotati oltre questi limiti: se il margine è stretto,
+/// Il programma cancella da sé i file ruotati oltre questi limiti: se il margine è stretto,
 /// un fermo di Loglem può far perdere file non ancora letti.
-pub fn caddy_margin_warning(roll: &CaddyRoll, unread_rotated: usize) -> Option<String> {
-    // Valori predefiniti di Caddy: 10 file, 90 giorni.
-    let keep = roll.keep.unwrap_or(10);
-    let keep_for = roll.keep_for_days.unwrap_or(90.0);
-    if keep_for < 7.0 {
+pub fn roll_margin_warning(program: &str, roll: &Roll, unread_rotated: usize) -> Option<String> {
+    if let Some(keep_for) = roll.keep_for_days.filter(|d| *d < 7.0) {
         return Some(format!(
-            "Caddy cancella i file ruotati dopo {keep_for:.1} giorni (roll_keep_for): se Loglem \
-             resta fermo più a lungo, si perdono righe. Consigliati almeno 7 giorni"
+            "{program} cancella i file ruotati dopo {keep_for:.1} giorni: se Loglem resta fermo \
+             più a lungo, si perdono righe. Consigliati almeno 7 giorni"
         ));
     }
-    if unread_rotated + 1 >= keep as usize {
+    if let Some(keep) = roll.keep.filter(|k| unread_rotated + 1 >= *k as usize) {
         return Some(format!(
-            "Ci sono {unread_rotated} file ruotati non ancora letti e Caddy ne tiene al massimo \
-             {keep} (roll_keep): al prossimo giro rischia di cancellarne uno. Aumenta roll_keep"
+            "Ci sono {unread_rotated} file ruotati non ancora letti e {program} ne tiene al massimo \
+             {keep}: al prossimo giro rischia di cancellarne uno. Aumenta quel limite"
         ));
     }
     None
 }
 
-// ---------- Nginx e Apache ----------
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// Il file di configurazione più quelli richiamati con `include`/`Include` (un livello di
-/// profondità, con i caratteri jolly `*`).
-fn with_includes(config: &Path) -> String {
-    let text = read(config);
-    let base = config.parent().unwrap_or(Path::new("/"));
-    let mut all = text.clone();
-    for line in text.lines() {
-        let words: Vec<&str> = line
-            .trim()
-            .trim_end_matches(';')
-            .split_whitespace()
+    fn spec(id: &str) -> ConfigSpec {
+        recipes::get(id).unwrap().config.clone().unwrap()
+    }
+
+    #[test]
+    fn directive_files_give_paths_with_their_site_names() {
+        let text = "http {\n  access_log /var/log/nginx/access.log;\n  server {\n    server_name shop.example www.shop.example;\n    access_log /var/log/nginx/shop.access.log combined;\n    error_log /var/log/nginx/shop.error.log;\n  }\n  server {\n    server_name api.example;\n    access_log off;\n    access_log syslog:server=unix:/dev/log;\n  }\n}\n";
+        let logs = directives(text, &spec("nginx"));
+        let shop: Vec<_> = logs
+            .iter()
+            .filter(|l| l.hosts.contains(&"shop.example".to_owned()))
             .collect();
-        if let [directive, pattern, ..] = words.as_slice() {
-            if directive.eq_ignore_ascii_case("include") || *directive == "IncludeOptional" {
-                let pattern = if pattern.starts_with('/') {
-                    pattern.to_string()
-                } else {
-                    base.join(pattern).display().to_string()
-                };
-                for path in glob::glob(&pattern).into_iter().flatten().flatten() {
-                    all.push('\n');
-                    all.push_str(&read(&path));
-                }
-            }
-        }
+        assert_eq!(shop.len(), 2);
+        assert!(shop
+            .iter()
+            .any(|l| l.kind == LogKind::Access && l.path.ends_with("shop.access.log")));
+        assert!(shop.iter().any(|l| l.kind == LogKind::Error));
+        assert!(logs
+            .iter()
+            .any(|l| l.path.ends_with("nginx/access.log") && l.hosts.is_empty()));
+        assert_eq!(logs.len(), 3, "off e syslog non sono file");
     }
-    all
-}
 
-/// Il primo argomento delle direttive indicate, se è un percorso assoluto
-/// (`off`, `syslog:` e pipe come `|/usr/bin/rotatelogs` vengono saltati).
-fn directive_paths(text: &str, directives: &[&str]) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    for line in text.lines() {
-        let line = line
-            .split('#')
-            .next()
-            .unwrap_or("")
-            .trim()
-            .trim_end_matches(';');
-        let mut words = line.split_whitespace();
-        let (Some(directive), Some(value)) = (words.next(), words.next()) else {
-            continue;
-        };
-        let value = value.trim_matches('"');
-        if directives.contains(&directive)
-            && value.starts_with('/')
-            && !paths.iter().any(|p: &PathBuf| p == Path::new(value))
-        {
-            paths.push(PathBuf::from(value));
-        }
+    #[test]
+    fn virtual_hosts_and_key_value_files() {
+        let text = "<VirtualHost *:443>\n  ServerName blog.example\n  ServerAlias www.blog.example\n  CustomLog ${APACHE_LOG_DIR}/blog-access.log combined\n</VirtualHost>\n";
+        let logs = directives(text, &spec("apache"));
+        assert_eq!(
+            logs[0].path,
+            PathBuf::from("/var/log/apache2/blog-access.log")
+        );
+        assert_eq!(
+            logs[0].hosts,
+            vec!["blog.example".to_owned(), "www.blog.example".to_owned()]
+        );
+        let kv = directives(
+            "[mysqld]\nlog_error = /var/log/mysql/error.log\n",
+            &spec("mysql"),
+        );
+        assert_eq!(kv[0].path, PathBuf::from("/var/log/mysql/error.log"));
+        let quoted = directives(
+            "accesslog.filename = \"/var/log/lighttpd/access.log\"\n",
+            &spec("lighttpd"),
+        );
+        assert_eq!(quoted[0].kind, LogKind::Access);
     }
-    paths
+
+    #[test]
+    fn site_blocks_with_the_address_first() {
+        let text = "{\n  email admin@example.com\n}\nshop.example, www.shop.example {\n  log {\n    output file /var/log/caddy/shop.log {\n      roll_keep 10\n      roll_keep_for 14d\n    }\n  }\n}\n(common) {\n  log\n}\n";
+        let logs = caddyfile(text);
+        assert_eq!(logs.len(), 1);
+        assert_eq!(
+            logs[0].hosts,
+            vec!["shop.example".to_owned(), "www.shop.example".to_owned()]
+        );
+        assert_eq!(logs[0].roll.as_ref().unwrap().keep, Some(10));
+        assert_eq!(logs[0].roll.as_ref().unwrap().keep_for_days, Some(14.0));
+    }
+
+    #[test]
+    fn static_configuration_in_yaml_toml_and_json() {
+        let yaml = "accessLog:\n  filePath: /var/log/proxy/access.log\nlog:\n  filePath: \"/var/log/proxy/proxy.log\"\n";
+        let toml = "[accessLog]\n  filePath = \"/var/log/proxy/access.log\"\n";
+        let json = r#"{"accessLog":{"filePath":"/var/log/proxy/access.log"}}"#;
+        assert_eq!(traefik(yaml).len(), 2);
+        assert_eq!(traefik(toml)[0].kind, LogKind::Access);
+        assert_eq!(
+            traefik(json)[0].path,
+            PathBuf::from("/var/log/proxy/access.log")
+        );
+    }
+
+    #[test]
+    fn hosts_are_cleaned() {
+        assert_eq!(clean_host("https://Shop.Example:443/"), "shop.example");
+        assert_eq!(clean_host("\"blog.example\";"), "blog.example");
+    }
 }

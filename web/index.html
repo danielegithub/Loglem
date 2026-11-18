@@ -4,10 +4,13 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="loglem-token" content="__LOGLEM_TOKEN__" />
-    <title>Loglem · Sorgenti</title>
+    <title>Loglem · Siti</title>
     <link rel="stylesheet" href="style.css" />
+    <script src="copies.js" defer></script>
     <script src="app.js" defer></script>
     <script src="rules.js" defer></script>
+    <script src="monitor.js" defer></script>
+    <script src="add.js" defer></script>
   </head>
   <body>
     <aside class="sidebar">
@@ -17,9 +20,9 @@
       </a>
       <p class="nav-label">MENU</p>
       <nav aria-label="Navigazione principale">
-        <a href="#sources" data-nav="sources"><span aria-hidden="true">◫</span> Sorgenti</a>
+        <a href="#sources" data-nav="sources"><span aria-hidden="true">◫</span> Siti</a>
         <a href="#logs" data-nav="logs"><span aria-hidden="true">≡</span> Esplora i log</a>
-        <a href="#add" data-nav="add" class="admin-only"><span aria-hidden="true">＋</span> Aggiungi sorgente</a>
+        <a href="#add" data-nav="add" class="admin-only"><span aria-hidden="true">＋</span> Aggiungi un log</a>
         <a href="#rules" data-nav="rules" class="admin-only"><span aria-hidden="true">▤</span> Regole e siti</a>
         <a href="#inventory" data-nav="inventory" class="admin-only"><span aria-hidden="true">⌖</span> Mappa del server</a>
         <a href="#diagnostics" data-nav="diagnostics"><span aria-hidden="true">⌁</span> Problemi</a>
@@ -28,6 +31,7 @@
       </nav>
       <div class="sidebar-bottom">
         <span class="connection-dot"></span> <span id="connection-status">Connessione…</span>
+        <small id="last-reading">Ultima lettura: —</small>
         <small id="version">Versione</small>
         <small class="data-dir">Dati in: <span id="data-dir">…</span></small>
         <div id="user-box" class="user-box" hidden>
@@ -40,11 +44,11 @@
     <main>
       <header class="page-header">
         <div>
-          <p class="eyebrow">LOGLEM / <span id="breadcrumb">SORGENTI</span></p>
-          <h1 id="page-title">Le tue sorgenti</h1>
+          <p class="eyebrow">LOGLEM / <span id="breadcrumb">SITI</span></p>
+          <h1 id="page-title">Siti e progetti</h1>
           <p id="page-subtitle"></p>
         </div>
-        <a class="button primary admin-only" id="header-add" href="#add">＋ Aggiungi sorgente</a>
+        <a class="button primary admin-only" id="header-add" href="#new-site">＋ Nuovo sito</a>
       </header>
 
       <div id="problems" class="problems" role="alert" hidden></div>
@@ -56,30 +60,61 @@
           <div><span>Sorgenti collegate</span><strong id="source-count">—</strong></div>
           <div><span>Righe salvate</span><strong id="entry-count">—</strong></div>
           <div><span>Spazio occupato</span><strong id="archive-size">—</strong></div>
+          <div id="card-uptime"><span>Loglem</span><strong id="uptime">—</strong></div>
+          <div id="card-check"><span>Ultimo controllo</span><strong id="last-check">—</strong></div>
+          <div id="card-alerts"><span>Avvisi aperti</span><strong id="open-alerts">—</strong></div>
         </div>
         <div class="section-heading">
-          <h2>Sorgenti collegate</h2>
+          <h2>Log per sito</h2>
           <button id="collect" class="admin-only">↻ Leggi adesso</button>
         </div>
         <p class="muted" id="collection-status"></p>
         <div id="source-list" class="source-grid"><p>Caricamento…</p></div>
       </section>
 
+      <section data-view="new-site" hidden>
+        <form id="new-site-form" class="panel">
+          <label for="new-site-name">Nome del sito o progetto</label>
+          <input id="new-site-name" maxlength="200" placeholder="example.com" required />
+          <div class="wizard-actions">
+            <a class="button" href="#sources">Annulla</a>
+            <button type="submit" class="primary">Crea sito</button>
+          </div>
+        </form>
+      </section>
+
+      <section data-view="site" hidden>
+        <a href="#sources" class="text-link">← Tutti i siti</a>
+        <div id="site-actions" class="row site-actions"></div>
+        <section id="site-storage" class="panel" hidden>
+          <h2>Copie e doppioni</h2>
+          <p id="site-space" role="status"></p>
+          <div class="row">
+            <button id="site-scan" class="admin-only" type="button">Cerca doppioni anche fuori da Loglem</button>
+            <button id="site-recount" type="button">Aggiorna conteggio</button>
+          </div>
+          <details id="site-matches" hidden>
+            <summary id="site-match-count"></summary>
+            <div id="site-match-list"></div>
+          </details>
+        </section>
+        <div id="site-logs" class="table-scroll"></div>
+        <div id="advice-panel" class="panel advice" hidden></div>
+        <section id="site-preview" class="panel" hidden>
+          <h2>Righe più recenti</h2>
+          <div id="site-recent"></div>
+        </section>
+      </section>
+
       <!-- Esplora i log -->
       <section id="view-logs" data-view="logs" hidden>
-        <div id="advice-panel" class="panel advice" hidden></div>
         <form id="search-form" class="panel filters">
           <div class="filter-dates">
             <label>Sito <select id="search-site"><option value="">Tutti i siti</option></select></label>
-            <label>Domanda <select id="search-question"><option value="">Ricerca libera</option><option value="admin">Accessi riusciti come root o deploy</option><option value="cron">Errori segnalati da cron</option><option value="5xx">Richieste HTTP con risposta 5xx</option><option value="404">IP con più risposte 404</option></select></label>
+            <label>Log <select id="search-source"><option value="">Tutte le sorgenti</option></select></label>
           </div>
           <div class="filter-main">
-            <div class="field">
-              <label for="search-source">Sorgente</label>
-              <select id="search-source">
-                <option value="">Tutte le sorgenti</option>
-              </select>
-            </div>
+            <label>Domanda <select id="search-question"><option value="">Ricerca libera</option><option value="admin">Accessi riusciti al server (SSH, sudo, su, login)</option><option value="cron">Errori segnalati da cron</option><option value="5xx">Richieste HTTP con risposta 5xx</option><option value="404">IP con più risposte 404</option></select></label>
             <div class="field grow">
               <label for="search-text">Cerca nel testo</label>
               <input id="search-text" placeholder="Una parola, un errore, un indirizzo IP…" />
@@ -134,7 +169,7 @@
                   <input id="search-status" type="number" min="100" max="599" placeholder="es. 404" />
                 </div>
               </div>
-              <small>Gravità e codice si riconoscono dal testo della riga (JSON di Caddy, Nginx, Apache, journal). Una riga senza «ERROR» o «WARN» conta come info.</small>
+              <small>Gravità e codice si riconoscono dal contenuto della riga, per qualsiasi programma: JSON, common/combined, syslog, logfmt o parole come ERROR e WARN. Una riga senza gravità conta come info.</small>
           </details>
         </form>
         <div id="log-source-status" class="inline-status" role="status"></div>
@@ -150,131 +185,142 @@
       <!-- Aggiungi sorgente -->
       <section id="view-add" data-view="add" hidden>
         <ol class="stepper" aria-label="Passaggi">
-          <li data-step="1">1 <span>Tipo</span></li>
-          <li data-step="2">2 <span>Cosa leggere</span></li>
-          <li data-step="3">3 <span>Nome e durata</span></li>
+          <li data-step="1">1 <span>Cosa</span></li>
+          <li data-step="2">2 <span>Chi</span></li>
+          <li data-step="3">3 <span>Dove</span></li>
+          <li data-step="4">4 <span>Riepilogo</span></li>
         </ol>
 
-        <div id="add-type" class="panel wizard-step">
-          <div id="discovered" class="discovered" hidden>
-            <h2>Trovati su questo server</h2>
-            <p class="muted">Letti dalle configurazioni di Caddy, Nginx e Apache.</p>
-            <div id="discovered-list"></div>
+        <div id="add-what" class="panel wizard-step">
+          <h2>Cosa vuoi aggiungere?</h2>
+          <p class="muted">Scegli che cosa vuoi tenere d'occhio: poi ti guido passo per passo.</p>
+          <div id="category-grid" class="type-grid"></div>
+          <form id="add-name-form" class="add-name" hidden>
+            <div class="field">
+              <label for="add-name" id="add-name-label">Come si chiama?</label>
+              <input id="add-name" maxlength="120" autocomplete="off" />
+              <small id="add-name-help"></small>
+            </div>
+            <div class="wizard-actions">
+              <button type="button" id="add-name-cancel">← Cambia scelta</button>
+              <button class="primary">Continua →</button>
+            </div>
+          </form>
+        </div>
+
+        <div id="add-who" class="panel wizard-step" hidden>
+          <h2 id="add-who-title">Chi risponde alle richieste?</h2>
+          <p class="muted">
+            In cima quelli trovati su questo server. Se davanti c'è un proxy, scegli anche quello:
+            il log degli accessi di solito lo scrive il primo che riceve la richiesta.
+          </p>
+          <div id="add-who-question" class="add-question" hidden>
+            <strong id="add-who-question-text"></strong>
+            <div class="row">
+              <button type="button" class="primary" id="add-who-yes">Sì, è lui</button>
+              <button type="button" id="add-who-no">No, scelgo io</button>
+            </div>
           </div>
-          <h2>Da dove vuoi leggere i log?</h2>
-          <p class="muted">Scegli il tipo di sorgente: poi ti guido passo per passo.</p>
-          <div class="type-grid">
-            <button id="choose-cron" class="type-card"><span class="type-icon">◷</span><strong>Cron</strong><span>Esecuzioni e problemi registrati nel journal</span><span class="type-link">›</span></button>
-            <button id="choose-traefik" class="type-card"><span class="type-icon">⇄</span><strong>Accessi Traefik</strong><span>File di accesso in formato JSON o CLF</span><span class="type-link">›</span></button>
-            <button id="choose-folder" class="type-card">
+          <div id="program-list" class="container-list" aria-live="polite"></div>
+          <div class="wizard-actions">
+            <button type="button" data-add-back="1">← Indietro</button>
+            <button type="button" id="add-who-unknown">Non lo so</button>
+            <button type="button" id="add-who-other">Un altro programma</button>
+            <button type="button" class="primary" id="add-who-next">Continua →</button>
+          </div>
+        </div>
+
+        <div id="add-where" class="panel wizard-step" hidden>
+          <h2>Dove sono i log?</h2>
+          <p class="muted">
+            Ho cercato su questo server. Le caselle già spuntate sono sicure; per le altre leggi il
+            motivo e scegli tu.
+          </p>
+          <div id="add-where-warnings" class="add-warnings"></div>
+          <div id="proposal-list" class="proposal-list" aria-live="polite"></div>
+          <h3>Manca qualcosa? Aggiungi da…</h3>
+          <div class="type-grid compact">
+            <button id="from-files" class="type-card" type="button">
               <span class="type-icon">▱</span>
-              <strong>Una cartella di file .log</strong>
-              <span>Tutti i file .log, anche quelli creati in seguito</span>
-              <span class="type-link" aria-hidden="true">›</span>
+              <strong>File o cartella</strong>
+              <span>Qualsiasi file di testo, o i file di una cartella con un certo nome</span>
             </button>
-            <button id="choose-podman" class="type-card">
+            <button id="from-container" class="type-card" type="button">
               <span class="type-icon">⬡</span>
-              <strong>Un container Podman</strong>
-              <span>I messaggi che un tuo container scrive mentre lavora</span>
-              <span class="type-link" aria-hidden="true">›</span>
+              <strong>Container</strong>
+              <span>Podman, Docker o un pod di Kubernetes, tutti in un elenco</span>
             </button>
-            <button id="choose-docker" class="type-card">
-              <span class="type-icon">◳</span>
-              <strong>Un container Docker</strong>
-              <span>Come Podman, per chi usa Docker</span>
-              <span class="type-link" aria-hidden="true">›</span>
-            </button>
-            <button id="choose-kubernetes" class="type-card">
-              <span class="type-icon">☸</span>
-              <strong>Kubernetes</strong>
-              <span>Un pod, oppure tutti i pod di un'applicazione anche dopo i rilasci</span>
-              <span class="type-link" aria-hidden="true">›</span>
-            </button>
-            <button id="choose-caddy" class="type-card">
-              <span class="type-icon">⟳</span>
-              <strong>Il log di accesso di Caddy</strong>
-              <span>Il log del server web, anche dopo le rotazioni</span>
-              <span class="type-link" aria-hidden="true">›</span>
-            </button>
-            <button id="choose-journal" class="type-card">
+            <button id="from-journal" class="type-card" type="button">
               <span class="type-icon">☰</span>
-              <strong>Il journal di Linux</strong>
-              <span>Il registro di sistema: servizi, accessi SSH, sudo</span>
-              <span class="type-link" aria-hidden="true">›</span>
+              <strong>Journal di sistema</strong>
+              <span>Servizi, programmi, gravità</span>
             </button>
+            <button id="from-other" class="type-card" type="button">
+              <span class="type-icon">?</span>
+              <strong>Altro</strong>
+              <span>Un log che non sta in un file</span>
+            </button>
+          </div>
+          <div class="wizard-actions">
+            <button type="button" data-add-back="2">← Indietro</button>
+            <button type="button" class="primary" id="add-where-next">Continua →</button>
           </div>
         </div>
 
         <div id="folder-step" class="panel wizard-step" hidden>
-          <h2 id="folder-step-title">Quale cartella vuoi seguire?</h2>
-          <p class="muted" id="folder-step-help">
+          <h2>File o cartella</h2>
+          <p class="muted">
             Naviga tra le cartelle del computer su cui gira Loglem, oppure scrivi il percorso e
-            premi Invio.
+            premi Invio. Scegli un file, oppure tutta la cartella con i nomi che ti servono.
           </p>
           <label for="folder-path">Percorso della cartella</label>
           <div class="row">
             <input id="folder-path" class="grow" placeholder="/var/log" />
-            <button id="open-folder">Apri</button>
-            <button id="folder-parent">↑ Cartella superiore</button>
+            <button id="open-folder" type="button">Apri</button>
+            <button id="folder-parent" type="button">↑ Cartella superiore</button>
           </div>
           <div id="folder-items" class="folder-list"></div>
           <div class="preview">
             <strong id="log-count"></strong>
             <ul id="log-files"></ul>
-            <small id="folder-preview-help">
-              Vengono letti i file .log di questa cartella, anche quelli futuri. Le sottocartelle
-              sono escluse.
-            </small>
+          </div>
+          <div class="field">
+            <label for="folder-pattern">Tutta la cartella: quali file?</label>
+            <div class="row">
+              <input id="folder-pattern" class="grow" list="folder-pattern-options" value="*.log" />
+              <datalist id="folder-pattern-options"></datalist>
+              <button id="use-folder" type="button" class="primary">Usa la cartella →</button>
+            </div>
+            <small id="folder-pattern-help">* sta per «qualsiasi testo». Vengono letti anche i file futuri con lo stesso nome. Le sottocartelle no.</small>
           </div>
           <div class="wizard-actions">
-            <button data-back-type>← Indietro</button>
-            <button id="use-folder" class="primary">Usa questa cartella →</button>
+            <button type="button" data-add-back="3">← Torna all'elenco</button>
           </div>
         </div>
 
-        <div id="podman-step" class="panel wizard-step" hidden>
-          <h2 id="podman-step-title">Quale container vuoi seguire?</h2>
-          <p class="muted">Ecco i container che l'utente che ha avviato Loglem può vedere.</p>
-          <details class="connection-settings">
-            <summary>Uso un Podman su un altro computer (facoltativo)</summary>
-            <label for="connection">Nome della connessione Podman</label>
-            <div class="row">
-              <input id="connection" class="grow" placeholder="Lascia vuoto per usare quella normale" />
-              <button id="load-podman">Ricarica l'elenco</button>
-            </div>
-          </details>
+        <div id="container-step" class="panel wizard-step" hidden>
+          <h2>Quale container?</h2>
+          <p class="muted">I container e i pod che l'utente che esegue Loglem può vedere.</p>
           <div id="container-list" class="container-list" aria-live="polite"></div>
           <label class="checkbox" id="follow-name-box" hidden>
             <input type="checkbox" id="follow-by-name" checked />
             Segui per nome tramite il journal (consigliato): i log continuano anche quando il
             container viene ricreato da un nuovo rilascio
           </label>
-          <div class="wizard-actions">
-            <button data-back-type>← Indietro</button>
-            <button id="use-podman" class="primary" disabled>Continua con questo container →</button>
-          </div>
-        </div>
-
-        <div id="kubernetes-step" class="panel wizard-step" hidden>
-          <h2>Quale applicazione vuoi seguire?</h2>
-          <p class="muted">I pod del cluster a cui è collegato kubectl.</p>
-          <div id="kubernetes-pods" class="container-list" aria-live="polite"></div>
-          <label class="checkbox">
+          <label class="checkbox" id="follow-app-box" hidden>
             <input type="checkbox" id="kubernetes-follow-app" checked />
             Segui tutti i pod dell'applicazione (etichetta <code>app</code>): i log continuano
             anche quando i pod vengono ricreati da un rilascio
           </label>
           <div class="wizard-actions">
-            <button data-back-type>← Indietro</button>
-            <button id="use-kubernetes" class="primary" disabled>Continua →</button>
+            <button type="button" data-add-back="3">← Torna all'elenco</button>
+            <button id="use-container" type="button" class="primary" disabled>Aggiungi all'elenco →</button>
           </div>
         </div>
 
         <div id="journal-step" class="panel wizard-step" hidden>
           <h2>Cosa vuoi leggere dal journal?</h2>
-          <p class="muted">
-            Lascia tutto vuoto per leggere l'intero journal, oppure scegli solo alcuni servizi.
-          </p>
+          <p class="muted">Scegli uno o più servizi, oppure dei programmi, oppure solo una gravità.</p>
           <div class="field">
             <span class="label">Servizi</span>
             <div id="journal-units" class="container-list" aria-live="polite"></div>
@@ -282,7 +328,7 @@
           <div class="field">
             <label for="journal-identifiers">Programmi (facoltativo)</label>
             <input id="journal-identifiers" placeholder="es. sshd, sudo" />
-            <small>Nomi separati da virgola. Utile per accessi SSH e uso di sudo.</small>
+            <small>Nomi separati da virgola.</small>
           </div>
           <div class="field">
             <label for="journal-priority">Gravità</label>
@@ -294,71 +340,38 @@
             </select>
           </div>
           <div class="wizard-actions">
-            <button data-back-type>← Indietro</button>
-            <button id="use-journal" class="primary">Continua →</button>
+            <button type="button" data-add-back="3">← Torna all'elenco</button>
+            <button id="use-journal" type="button" class="primary">Aggiungi all'elenco →</button>
           </div>
         </div>
 
-        <form id="save-source" class="panel wizard-step" hidden>
-          <h2>Ultimi dettagli</h2>
-          <div id="chosen-source" class="chosen-source"></div>
-          <div id="source-original-retention"></div>
-          <div class="field">
-            <label for="source-name">Nome della sorgente</label>
-            <input id="source-name" required maxlength="64" pattern="[A-Za-z0-9_\-]+" />
-            <small>Serve per ritrovarla nell'elenco. Solo lettere, numeri, - e _ (niente spazi).</small>
-          </div>
-          <div class="field">
-            <label for="source-days">Per quanto tempo Loglem conserva le copie?</label>
-            <div class="row">
-              <input id="source-days" type="number" min="1" max="36500" value="28" required />
-              <select id="source-unit" class="unit-select" aria-label="Unità di conservazione">
-                <option value="days">Giorni</option>
-                <option value="months">Mesi</option>
-                <option value="years">Anni</option>
-              </select>
-            </div>
-            <small>
-              Passato questo tempo Loglem elimina le righe scadute dal suo archivio.
-            </small>
-          </div>
-          <div class="field">
-            <label for="source-kind">Che tipo di log è?</label>
-            <select id="source-kind">
-              <option value="generic">Generico / applicazione</option>
-              <option value="access">Accessi (può contenere IP)</option>
-              <option value="error">Errori e stack trace</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="source-storage">Dove salvare il database SQLite?</label>
-            <select id="source-storage">
-              <option value="default">Cartella predefinita di Loglem</option>
-              <option value="custom">Una cartella personalizzata</option>
-            </select>
-            <p id="archive-location" class="path"></p>
-            <div id="source-custom-storage" hidden>
-              <div class="row">
-                <input id="source-archive-dir" class="grow" placeholder="Percorso assoluto della cartella" />
-                <button type="button" data-storage-for="source-archive-dir">Sfoglia…</button>
-              </div>
-              <small>
-                La cartella può essere creata da Loglem. Il database resta separato per questa
-                sorgente.
-              </small>
-            </div>
-          </div>
+        <div id="other-step" class="panel wizard-step" hidden>
+          <h2>Un log che non sta in un file</h2>
+          <p id="other-help" class="pre-line"></p>
           <div class="wizard-actions">
-            <button id="cancel-add" type="button">Annulla</button>
-            <button class="primary" type="submit">Salva e guarda i log →</button>
+            <button type="button" data-add-back="3">← Torna all'elenco</button>
           </div>
-        </form>
+        </div>
+
+        <div id="add-summary" class="panel wizard-step" hidden>
+          <h2>Riepilogo</h2>
+          <p id="add-summary-target" class="muted"></p>
+          <div id="add-summary-list" class="table-scroll"></div>
+          <p class="muted">
+            Ogni log viene tenuto 28 giorni nella copia di Loglem: lo cambi dopo, nelle impostazioni
+            del log. I file originali non vengono toccati.
+          </p>
+          <div class="wizard-actions">
+            <button type="button" data-add-back="3">← Indietro</button>
+            <button type="button" class="primary" id="add-save">Salva e inizia a leggere</button>
+          </div>
+        </div>
       </section>
 
       <!-- Impostazioni della sorgente -->
       <section id="view-settings" data-view="settings" hidden>
         <div class="panel">
-          <a href="#sources" class="text-link">← Torna alle sorgenti</a>
+          <a id="settings-back" href="#sources" class="text-link">← Tutti i siti</a>
           <h2 id="settings-title">Impostazioni sorgente</h2>
           <div id="settings-advice" class="advice" hidden></div>
           <section class="source-lifecycle"><h3>Conservazione alla sorgente</h3><div id="settings-original-retention"></div></section>
@@ -371,7 +384,11 @@
             <div class="field">
               <label for="settings-kind">Tipo di log</label>
               <select id="settings-kind">
-                <option value="generic">Generico / applicazione</option>
+                <option value="application">Applicazione</option>
+                <option value="database">Database</option>
+                <option value="admin_access">Accessi amministrativi</option>
+                <option value="system">Sistema</option>
+                <option value="other">Altro</option>
                 <option value="access">Accessi (può contenere IP)</option>
                 <option value="error">Errori e stack trace</option>
               </select>
@@ -412,50 +429,67 @@
               </div>
             </div>
 
+            <section id="cleanup-panel" class="cleanup-panel" hidden>
+              <h3>Pulizia dei file originali</h3>
+              <p class="muted">
+                I file originali sono quelli scritti dal tuo programma. Loglem tiene una copia per
+                conto suo: qui scegli chi cancella gli originali.
+              </p>
+              <p id="cleanup-headline" class="cleanup-headline"></p>
+              <ul id="cleanup-notes" class="cleanup-notes"></ul>
+
+              <div id="rotated-settings" class="cleanup-choice" hidden>
+                <label class="checkbox">
+                  <input id="remove-rotated" type="checkbox" />
+                  <span><strong>Loglem cancella i file ruotati</strong> dopo averli archiviati e controllati</span>
+                </label>
+                <div class="field">
+                  <label for="rotated-pattern">Nomi dei file ruotati</label>
+                  <div class="row">
+                    <input id="rotated-pattern" class="grow" placeholder="es. access.log.*" />
+                    <button type="button" id="use-suggested-pattern" hidden></button>
+                  </div>
+                  <small>
+                    Il programma o logrotate ruota il file e gli dà un nome nuovo (per esempio
+                    <code>access.log.1</code>). Scrivi qui come si chiamano, con * al posto di ciò
+                    che cambia. Deve iniziare con il nome del log.
+                  </small>
+                </div>
+              </div>
+
+              <div id="handoff-choice" class="cleanup-choice" hidden>
+                <div class="field">
+                  <label for="cleanup-mode">Il programma sposta i file finiti in una cartella a parte?</label>
+                  <select id="cleanup-mode">
+                    <option value="keep">No: Loglem legge soltanto, non cancella niente</option>
+                    <option value="handoff">Sì: Loglem archivia ed elimina i file di quella cartella</option>
+                  </select>
+                </div>
+                <div id="cleanup-settings" hidden>
+                  <label for="completed-dir">Cartella dove il programma mette i file finiti</label>
+                  <div class="row">
+                    <input id="completed-dir" class="grow" placeholder="/percorso/file-conclusi" />
+                    <button type="button" data-storage-for="completed-dir">Sfoglia…</button>
+                  </div>
+                  <small>
+                    Questa cartella la riempie il tuo programma, non Loglem: Loglem non sposta
+                    niente. Deve contenere solo file .log che il programma ha chiuso.
+                  </small>
+                  <label class="checkbox">
+                    <input id="handoff-confirmed" type="checkbox" />
+                    Confermo che questa cartella contiene solo file conclusi, separati dai file attivi.
+                  </label>
+                </div>
+              </div>
+
+              <p id="cleanup-warning" class="cleanup-warning" role="alert" hidden></p>
+            </section>
+
             <details id="file-source-settings">
-              <summary>Posizione della sorgente e pulizia degli originali</summary>
+              <summary>Percorso da cui leggere (avanzato)</summary>
               <div class="field">
                 <label for="settings-source-path">Percorso da cui leggere</label>
                 <input id="settings-source-path" />
-              </div>
-
-              <div id="rotated-settings" hidden>
-                <label class="checkbox">
-                  <input id="remove-rotated" type="checkbox" />
-                  Elimina i file ruotati dopo averli archiviati e verificati
-                </label>
-                <p class="muted">
-                  Il file su cui il programma scrive non viene mai toccato. I file ruotati vengono
-                  eliminati solo se nessuno li modifica da almeno 24 ore.
-                </p>
-                <div id="caddy-snippet-box" hidden>
-                  <p>Blocco da usare nel Caddyfile (poi riavvia Caddy):</p>
-                  <pre id="caddy-snippet" class="snippet"></pre>
-                </div>
-              </div>
-
-              <div class="field">
-                <label for="cleanup-mode">File consegnati come conclusi</label>
-                <select id="cleanup-mode">
-                  <option value="keep">Lasciali dove sono (solo lettura)</option>
-                  <option value="handoff">Archivia ed elimina i file di una cartella dedicata</option>
-                </select>
-              </div>
-              <div id="cleanup-settings" hidden>
-                <label for="completed-dir">Cartella dedicata ai file conclusi</label>
-                <div class="row">
-                  <input id="completed-dir" class="grow" placeholder="/percorso/file-conclusi" />
-                  <button type="button" data-storage-for="completed-dir">Sfoglia…</button>
-                </div>
-                <p class="muted">
-                  Qui il programma deve consegnare solo file .log che ha chiuso e non modificherà
-                  più. Loglem li archivia, verifica il contenuto e li elimina quando nessuno li
-                  modifica da almeno 24 ore.
-                </p>
-                <label class="checkbox">
-                  <input id="handoff-confirmed" type="checkbox" />
-                  Confermo che questa cartella contiene solo file conclusi, separati dai file attivi.
-                </label>
               </div>
             </details>
 
@@ -472,8 +506,9 @@
           <div class="source-lifecycle">
             <h3>Gestisci collegamento</h3>
             <p class="muted">
-              Pausa e scollegamento fermano le nuove letture. Lo storico resta consultabile e
-              soggetto alla durata scelta.
+              <strong>Pausa</strong>: Loglem smette di leggere finché non premi «Riprendi».
+              <strong>Scollega</strong>: per un container o un file che non c'è più; resta solo lo
+              storico, che scade secondo la durata scelta. In entrambi i casi puoi tornare a leggere.
             </p>
             <div class="row">
               <button id="pause-source" type="button">Metti in pausa</button>
@@ -610,6 +645,55 @@
         <p id="map-notes" class="muted"></p><div id="map-result" class="table-scroll"></div></div></section>
       <!-- Sistema -->
       <section id="view-system" data-view="system" hidden>
+        <div id="service-panel" class="panel policy-form" aria-live="polite">
+          <h2>Servizio</h2>
+          <p class="muted">
+            Il servizio tiene Loglem acceso: legge i log, fa il controllo automatico e riparte da
+            solo dopo un guasto o un riavvio del computer.
+          </p>
+          <p id="service-state" class="service-state">Controllo in corso…</p>
+          <p id="service-detail" class="muted"></p>
+          <div class="row">
+            <button id="service-install" type="button">Installa o reinstalla il servizio</button>
+            <button id="service-restart" type="button">Riavvia</button>
+          </div>
+        </div>
+        <form id="monitor-form" class="panel policy-form">
+          <h2>Controllo automatico</h2>
+          <p class="muted">
+            Loglem controlla da solo che tutto funzioni (sorgenti lette, regole di allarme, spazio)
+            e mostra l'esito in alto. Non serve nessun cron.
+          </p>
+          <label class="checkbox"><input type="checkbox" id="monitor-on"> Controlla da solo</label>
+          <label>Ogni quanti minuti <input id="monitor-minutes" type="number" min="1" max="1440" required></label>
+          <p id="monitor-result" class="muted"></p>
+          <div class="row">
+            <button class="primary">Salva</button>
+            <button type="button" id="monitor-now">Controlla adesso</button>
+          </div>
+        </form>
+        <form id="email-form" class="panel policy-form" autocomplete="off">
+          <h2>Avvisi per mail (facoltativo)</h2>
+          <p class="muted">
+            Se non configuri niente, gli avvisi si vedono solo qui, nel terminale e con
+            <code>loglem check</code>. Con Resend ricevi una mail quando un problema si apre, quando
+            si chiude e un promemoria se resta aperto più di 24 ore. Le mail non contengono righe di log.
+          </p>
+          <label>Chiave di Resend
+            <input type="password" id="email-key" autocomplete="new-password" placeholder="Incolla la chiave (non si rilegge mai)">
+          </label>
+          <small id="email-key-note"></small>
+          <label>Mittente <input id="email-from" placeholder="noreply@tuodominio.it"></label>
+          <label>Invia a <input id="email-to" placeholder="tuo@indirizzo.it (fino a 5, separati da virgola)"></label>
+          <label>Indirizzo della pagina nella mail (facoltativo) <input id="email-page" type="url" placeholder="https://…"></label>
+          <label>Al massimo quante mail all'ora <input id="email-limit" type="number" min="1" max="60" value="6"></label>
+          <p id="email-last" class="muted"></p>
+          <div class="row">
+            <button class="primary">Salva</button>
+            <button type="button" id="email-test">Invia una mail di prova</button>
+            <button type="button" id="email-off" class="danger">Disattiva e cancella la chiave</button>
+          </div>
+        </form>
         <form id="proof-form" class="panel policy-form"><h2>Sigilli e marche temporali</h2><label>Sorgente <select id="proof-source" required></select></label>
           <label class="checkbox"><input type="checkbox" id="proof-on"> Sigilla i giorni conclusi</label>
           <label>Autorità RFC 3161 (facoltativa) <input type="url" id="proof-tsa" placeholder="https://…"></label>
@@ -691,22 +775,5 @@
       </div>
     </dialog>
 
-    <dialog id="caddy-dialog">
-      <h2>Ultimo passo: configura Caddy</h2>
-      <p>
-        Nel Caddyfile, dentro il blocco del tuo sito, usa questo blocco <code>log</code>. Poi
-        riavvia Caddy.
-      </p>
-      <pre id="caddy-dialog-snippet" class="snippet"></pre>
-      <p class="muted">
-        Caddy può comprimere i file ruotati (.gz): Loglem li legge comunque, senza duplicare
-        righe. <code>roll_keep_for</code> è una rete di sicurezza: se Loglem resta spento a lungo,
-        Caddy elimina comunque i file più vecchi di 60 giorni.
-      </p>
-      <div class="wizard-actions">
-        <button id="caddy-dialog-copy" type="button">Copia</button>
-        <button id="caddy-dialog-close" class="primary" type="button">Fatto</button>
-      </div>
-    </dialog>
   </body>
 </html>

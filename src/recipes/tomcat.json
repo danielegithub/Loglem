@@ -1,0 +1,57 @@
+{
+  "id": "tomcat",
+  "name": "Tomcat",
+  "categories": [
+    "app",
+    "web"
+  ],
+  "recognize": {
+    "configs": [
+      "/etc/tomcat9/server.xml",
+      "/etc/tomcat10/server.xml",
+      "/opt/tomcat/conf/server.xml"
+    ],
+    "images": [
+      "tomcat"
+    ],
+    "units": [
+      "tomcat9.service",
+      "tomcat10.service",
+      "tomcat.service"
+    ]
+  },
+  "logs": [
+    {
+      "path": "/var/log/tomcat*/catalina.out",
+      "kind": "application"
+    },
+    {
+      "path": "/var/log/tomcat*/localhost_access_log.*.txt",
+      "kind": "access",
+      "format": "combined"
+    },
+    {
+      "path": "/opt/tomcat/logs/catalina.out",
+      "kind": "application"
+    },
+    {
+      "path": "/opt/tomcat/logs/localhost_access_log.*.txt",
+      "kind": "access",
+      "format": "combined"
+    }
+  ],
+  "journal": {
+    "units": [
+      "tomcat9.service",
+      "tomcat10.service",
+      "tomcat.service"
+    ]
+  },
+  "rotation": "logrotate",
+  "notes": {
+    "access": {
+      "it": "In `server.xml`, dentro `<Host>`, attiva la valvola `AccessLogValve` (prefisso `localhost_access_log`), poi riavvia Tomcat.",
+      "en": "In `server.xml`, inside `<Host>`, enable the `AccessLogValve` (prefix `localhost_access_log`), then restart Tomcat."
+    }
+  }
+}

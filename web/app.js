@@ -7,9 +7,11 @@ const REFRESH_MS = 2000;
 const PAGES = {
   rules: ['Regole e siti', 'Gestisci le classi, le quote degli archivi e le assegnazioni.'],
   inventory: ['Mappa del server', 'Sorgenti visibili su questo server e collegamenti a Loglem.'],
-  sources: ['Le tue sorgenti', 'Qui vedi da dove Loglem legge i log e quanto spazio occupano.'],
+  sources: ['Siti e progetti', 'Apri un sito per vedere i suoi log.'],
+  site: ['Log del sito', ''],
+  'new-site': ['Nuovo sito', 'Potrai collegare i log dopo aver scelto il nome.'],
   logs: ['Esplora i log', 'Scegli una sorgente, cerca una parola e filtra per data.'],
-  add: ['Aggiungi una sorgente', 'Tre passaggi per iniziare a salvare i log.'],
+  add: ['Aggiungi un log', 'Cosa, chi, dove: ti guido un passo alla volta.'],
   settings: ['Impostazioni sorgente', 'Nome, durata, posizione dei dati e collegamento.'],
   diagnostics: ['Problemi', 'Se qualcosa non funziona, qui trovi cosa è successo.'],
   privacy: ['Dati personali', 'Cancella o scarica i dati di una persona, e guarda chi ha consultato i log.'],
@@ -17,16 +19,10 @@ const PAGES = {
   stats: ['Statistiche', 'Richieste, pagine, codici di risposta e indirizzi di un log di accesso.'],
 };
 
-const SOURCE_KINDS = { podman: 'PODMAN', docker: 'DOCKER', kubernetes: 'KUBERNETES', journal: 'JOURNAL' };
-
-let state = { sources: [], collection: {} };
+let state = { sources: [], sites: {}, collection: {} };
 let view = 'sources';
-let selected = null; // sorgente in corso di aggiunta
-let folder = null;
-let container = null;
-let addKind = null;
 let settingsSource = null;
-let refreshing = false;
+let statusRequest = null;
 let searching = false;
 let lastSignature = '';
 let searchSequence = 0;
@@ -153,26 +149,27 @@ function highlight(parent, text, query) {
 
 // ---------- elenco sorgenti ----------
 
-function renderEmptySources(list) {
-  const empty = element('div', undefined, 'empty-state');
-  empty.append(
-    element('div', '▱', 'empty-icon'),
-    element('h2', 'Inizia collegando una sorgente'),
-    element(
-      'p',
-      'Una sorgente è una cartella con file .log oppure un container Podman. ' +
-        'Loglem ne salva una copia in cui puoi cercare. La durata delle copie si imposta per ogni sorgente.',
-    ),
-    link('＋ Aggiungi la prima sorgente', '#add', 'button primary admin-only'),
-  );
-  list.append(empty);
-}
-
 // Le sonde del runtime possono essere lente: condividi la richiesta tra scheda e impostazioni.
 const originalRetentionCache = new Map();
 
-function originalRetentionNote(input, source, cleanup = false) {
+function originalRetentionNote(input, source) {
   const note = element('p', 'Verifica della durata degli originali…', 'muted');
+  if (source && (input.kind === 'file' || input.kind === 'folder')) {
+    // Per i file dice chi ripulisce gli originali e se due sistemi si sovrappongono.
+    const key = JSON.stringify(['cleanup', source.source, input, source.remove_rotated, source.completed_dir, source.retention]);
+    let cached = originalRetentionCache.get(key);
+    if (!cached || Date.now() - cached.at > 60000) {
+      cached = { at: Date.now(), result: api('cleanup', { name: source.source }).catch(() => null) };
+      originalRetentionCache.set(key, cached);
+    }
+    cached.result.then((r) => {
+      if (!r) { note.textContent = 'Pulizia degli originali: configurazione non disponibile.'; return; }
+      const warns = r.notes.filter((n) => n.level === 'warn').map((n) => n.text);
+      note.textContent = 'Originali · ' + r.headline + (warns.length ? ' ' + warns.join(' ') : '');
+      note.className = r.level === 'warn' || warns.length ? 'card-warning' : 'muted';
+    });
+    return note;
+  }
   const key = JSON.stringify([source?.source, input, source?.remove_rotated, source?.completed_dir]);
   let cached = originalRetentionCache.get(key);
   if (!cached || Date.now() - cached.at > 60000) {
@@ -183,89 +180,141 @@ function originalRetentionNote(input, source, cleanup = false) {
     originalRetentionCache.set(key, cached);
   }
   cached.result.then((policy) => {
-    const removesFiles = !source && cleanup;
-    note.textContent = 'Originali · ' + policy + (removesFiles
-      ? ' Loglem può eliminare i file conclusi configurati dopo la verifica e almeno 24 ore dall’ultima modifica.'
-      : '');
+    note.textContent = policy;
   });
   return note;
 }
 
-function sourceTypeLabel(s) {
-  if (s.input.kind === 'journal' && s.input.matches?.some(m=>m.startsWith('CONTAINER_NAME='))) {
-    return (s.journal_runtime?.toUpperCase() || 'CONTAINER') + ' · tramite journal';
+const LOG_KINDS = {
+  access: 'Accessi web', error: 'Errori', application: 'Applicazione', database: 'Database',
+  admin_access: 'Accessi amministrativi', system: 'Sistema', other: 'Altro',
+};
+
+function siteCard(site, logs) {
+  const card = element('article', undefined, 'source-card');
+  const header = element('div', undefined, 'card-heading');
+  const title = element('h3');
+  title.append(link(site.name, '#site/' + site.id, 'text-link'));
+  const errors = logs.filter(s => sourceError(s)).length;
+  const attention = logs.some(s => sourceBadge(s)[1] || s.warning || s.recovery ||
+    Date.now() - Date.parse(s.last_collection) > 15 * 60000 ||
+    s.gaps.some(gap => Date.now() - Date.parse(gap.to) < 86400000));
+  let badge = ['Log aggiornati', ''];
+  if (errors) badge = [errors + ' in errore', 'error'];
+  else if (!logs.length) badge = ['Da collegare', 'waiting'];
+  else if (attention) badge = ['Da controllare', 'attention'];
+  header.append(title, element('span', badge[0], 'badge ' + badge[1]));
+  card.append(header, element('p', logs.length + ' log'));
+  // Un errore senza spiegazione non aiuta: quale log, perché, e dove guardare.
+  for (const log of logs.filter(s => sourceError(s))) {
+    const problem = element('div', undefined, 'card-error');
+    const reason = sourceError(log);
+    problem.append(element('strong', (log.label || log.source) + ': '),
+      document.createTextNode(reason.length > 160 ? reason.slice(0, 160) + '…' : reason + ' '));
+    problem.append(link('Apri il log', '#settings/' + log.source, 'text-link'));
+    card.append(problem);
   }
-  return SOURCE_KINDS[s.input.kind] || (s.input.rotated_pattern?.endsWith('-*.log') ? 'FILE · rotazione Caddy' : 'FILE DI LOG');
+  if (logs.length) {
+    const archive = logs.reduce((sum, s) => sum + s.archive_bytes, 0);
+    const original = state.originals?.[site.id === '~' ? '' : site.id];
+    if (original) card.append(element('p', 'Originali in raccolta · ' + formatSize(original.bytes) +
+      (original.partial ? ' (misura parziale)' : '')));
+    card.append(element('p', 'Archivio · ' + formatSize(archive)));
+  }
+  if (!document.body.classList.contains('reader')) {
+    for (const log of logs.filter(log => log.entries)) card.append(adviceNote(log));
+  }
+  if (site.id === '~') card.append(link('Assegna i log a un sito', '#rules', 'text-link admin-only'));
+  return card;
 }
 
-function renderSourceCard(source) {
-  const card = element('article', undefined, 'source-card');
+let detailSignature = '';
+let previewSignature = '';
+let previewRequest = 0;
 
-  const heading = element('div', undefined, 'card-heading');
+function siteLogRow(source) {
   const title = element('div');
-  title.append(
-    element('span', sourceTypeLabel(source), 'source-kind'),
-    element('h3', source.label || source.source),
-  );
-  const [badgeText, badgeClass] = sourceBadge(source);
-  heading.append(title, element('span', badgeText, 'badge ' + badgeClass));
-  card.append(heading, element('p', source.origin, 'source-origin'));
-
-  const metrics = element('div', undefined, 'card-metrics');
-  const values = [
-    [source.entries.toLocaleString('it-IT'), 'righe salvate'],
-    [periodText(sourcePeriod(source)), 'di conservazione in Loglem'],
-  ];
-  for (const [value, label] of values) {
-    const metric = element('div');
-    metric.append(element('strong', value), element('span', label));
-    metrics.append(metric);
+  title.append(link(sourceOptionLabel(source), '#logs/' + source.source, 'text-link'),
+    element('small', LOG_KINDS[source.log_kind] || 'Altro'));
+  title.append(element('small', source.origin, 'path'));
+  const copies = copyLocations(source);
+  // Il programma è solo un'etichetta: si riconosce dal percorso, dal servizio o dalla scelta fatta.
+  const program = element('div', source.program || 'Non riconosciuto');
+  program.append(element('small', source.format ? 'Formato · ' + source.format : 'Formato · in attesa delle prime righe'));
+  const rotation = element('div', rotationText(source));
+  const policy = element('div', periodText(source.retention));
+  policy.append(element('small', source.class || 'Regola individuale'));
+  const [label, style] = sourceBadge(source);
+  const status = element('div');
+  status.append(element('span', label, 'badge ' + style));
+  if (source.last_collection) status.append(element('small', formatDate(source.last_collection)));
+  for (const message of [sourceError(source), source.warning, source.recovery].filter(Boolean)) {
+    status.append(element('small', message));
   }
-  card.append(metrics, originalRetentionNote(source.input, source));
-
-  const error = sourceError(source);
-  if (source.recovery) card.append(element('p', source.recovery, 'card-info'));
-  if (source.warning) card.append(element('p', source.warning, 'card-warning'));
   for (const gap of source.gaps.slice(0, 3)) {
-    const text = 'Possibile lacuna dal ' + formatDate(gap.from) + ' al ' + formatDate(gap.to) + ': ' + gap.reason;
-    card.append(element('p', text, 'card-warning'));
+    status.append(element('small', 'Possibile lacuna · ' + formatDate(gap.from) + ' – ' + formatDate(gap.to) + ' · ' + gap.reason));
   }
-  if (error) {
-    card.append(element('p', error, 'card-error'));
-  } else if (source.entries === 0) {
-    card.append(
-      element(
-        'small',
-        source.last_collection
-          ? 'Per ora la sorgente non ha prodotto righe nel periodo conservato.'
-          : 'In attesa della prima lettura…',
-      ),
-    );
+  const history = element('details');
+  history.dataset.key = 'history-' + source.source;
+  history.append(element('summary', 'Storico'), element('small', source.entries + ' righe'),
+    element('small', 'Prima riga · ' + formatDate(source.earliest)), element('small', source.message));
+  status.append(history);
+  const actions = element('div');
+  if (source.log_kind === 'access') actions.append(link('Statistiche', '#stats/' + source.source, 'text-link'));
+  actions.append(link('Impostazioni', '#settings/' + source.source, 'text-link admin-only'));
+  if (source.entries && !document.body.classList.contains('reader')) actions.append(adviceNote(source));
+  return [title, program, rotation, copies, policy, status, actions];
+}
+
+function renderSite(id) {
+  const site = id === '~' ? { name: 'Senza sito' } : Object.hasOwn(state.sites, id) && state.sites[id];
+  $('page-title').textContent = site ? site.name : 'Sito non trovato';
+  document.title = 'Loglem · ' + $('page-title').textContent;
+  const logs = state.sources.filter(s => s.site === (id === '~' ? '' : id));
+  const signature = JSON.stringify([id, site, logs]);
+  updateCopyScope(id, !!site && !!logs.length, logs);
+  if (signature === detailSignature) return;
+  detailSignature = signature;
+  const actions = $('site-actions');
+  actions.replaceChildren();
+  const opened = new Set([...$('site-logs').querySelectorAll('details[open]')].map(d => d.dataset.key));
+  $('site-logs').replaceChildren();
+  if (!site) {
+    $('site-preview').hidden = true;
+    return;
   }
+  actions.append(link('Aggiungi un log', id === '~' ? '#add' : '#add/' + id, 'button primary admin-only'));
+  if (logs.length) {
+    actions.append(link('Cerca nei log del sito', '#logs/site/' + id));
+    tabulate('site-logs', ['Log e origine', 'Programma', 'Rotazione', 'Copie', 'Durata in Loglem', 'Stato', 'Azioni'], logs.map(siteLogRow));
+    for (const detail of $('site-logs').querySelectorAll('details')) detail.open = opened.has(detail.dataset.key);
+  } else {
+    $('site-logs').append(element('p', 'Nessun log collegato.'));
+  }
+  refreshSitePreview(id, logs);
+}
 
-  card.append(adviceNote(source));
-
-  const actions = element('div', undefined, 'row');
-  actions.append(
-    link('Vedi i log →', '#logs/' + encodeURIComponent(source.source), 'button primary'),
-    link('Impostazioni', '#settings/' + encodeURIComponent(source.source), 'button admin-only'),
-    link('Statistiche', '#stats/' + encodeURIComponent(source.source)),
-  );
-  card.append(actions);
-
-  const details = element('details');
-  details.append(
-    element('summary', 'Dove sono i dati'),
-    element('p', 'Copia salvata in: ' + source.archive, 'path'),
-    element(
-      'p',
-      'Spazio: ' + formatSize(source.archive_bytes) + ' · Primo log in Loglem: ' + formatDate(source.earliest),
-      'path',
-    ),
-    element('p', source.message, 'muted'),
-  );
-  card.append(details);
-  return card;
+async function refreshSitePreview(id, logs) {
+  const signature = JSON.stringify([id, logs.map(s => [s.source, s.entries, s.earliest])]);
+  if (signature === previewSignature) return;
+  previewSignature = signature;
+  const request = ++previewRequest;
+  const panel = $('site-preview');
+  panel.hidden = !logs.some(s => s.entries > 0);
+  if (panel.hidden) return;
+  const list = $('site-recent');
+  list.replaceChildren();
+  try {
+    const { rows } = await api('search', { site: id, limit: 3 });
+    if (request === previewRequest && location.hash === '#site/' + id) {
+      list.replaceChildren(...rows.map(row => renderLogRow(row, '')));
+    }
+  } catch (error) {
+    if (request === previewRequest) {
+      list.textContent = error.message;
+      previewSignature = '';
+    }
+  }
 }
 
 function collectionStatusText(progress) {
@@ -287,17 +336,19 @@ function renderSources() {
   $('collection-status').textContent = collectionStatusText(state.collection);
 
   // Ridisegna le schede solo se i dati sono cambiati, per non perdere i «details» aperti.
-  const signature = JSON.stringify(sources);
+  const signature = JSON.stringify([state.sites, state.originals, sources]);
   if (signature === lastSignature) return;
   lastSignature = signature;
 
   const list = $('source-list');
   list.replaceChildren();
-  if (sources.length === 0) {
-    renderEmptySources(list);
-    return;
+  const groups = new Map();
+  for (const source of sources) {
+    if (!groups.has(source.site)) groups.set(source.site, []);
+    groups.get(source.site).push(source);
   }
-  for (const source of sources) list.append(renderSourceCard(source));
+  for (const site of orderedSites()) list.append(siteCard(site, groups.get(site.id) || []));
+  if (groups.has('')) list.append(siteCard({id: '~', name: 'Senza sito'}, groups.get('')));
 }
 
 function sourceOptionLabel(source) {
@@ -307,9 +358,14 @@ function sourceOptionLabel(source) {
 // Riquadro in cima alla pagina: sorgenti ferme, in errore o con lacune recenti.
 function renderProblems(problems) {
   const box = $('problems');
-  box.hidden = problems.length === 0;
+  if (problems.length === 0) {
+    // Nessun problema: la fascia dice comunque che tutto va bene (o perché non fidarsi).
+    calmStatus(box);
+    return;
+  }
+  box.className = 'problems bad';
+  box.hidden = false;
   box.replaceChildren();
-  if (problems.length === 0) return;
   box.append(element('strong', problems.length === 1 ? 'Attenzione' : problems.length + ' cose da controllare'));
   const list = element('ul');
   for (const problem of problems.slice(0, 5)) {
@@ -326,25 +382,44 @@ function renderProblems(problems) {
     list.append(item);
   }
   box.append(list);
+  const mail = emailWarning();
+  if (mail) box.append(element('p', mail));
+}
+
+function orderedSites() {
+  return Object.values(state.sites).sort((a, b) => {
+    if ((a.id === 'server') !== (b.id === 'server')) return a.id === 'server' ? 1 : -1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+function siteInputValue(site) {
+  const name = site.name;
+  const conflicts = Object.hasOwn(state.sites, name) && name !== site.id;
+  const repeated = Object.values(state.sites).some(other => other.id !== site.id && other.name === name);
+  return conflicts || repeated || name.trim() !== name ? site.id : name;
 }
 
 function syncSourceSelect() {
   const select = $('search-source');
   const previous = select.value;
   // Ricostruisce l'elenco solo se nomi o etichette sono cambiati.
-  const sites = [...new Set(state.sources.map(s=>s.site).filter(Boolean))].sort();
+  const sites = orderedSites();
+  if (state.sources.some(s => !s.site)) sites.push({ id: '~', name: 'Senza sito' });
   const site = $('search-site');
-  if (JSON.stringify(sites) !== JSON.stringify([...site.options].slice(1).map(o=>o.value))) {
-    const chosen=site.value;
-    site.replaceChildren(new Option('Tutti i siti',''),...sites.map(s=>new Option(s,s)));
-    if(sites.includes(chosen)) site.value=chosen;
+  const options = [...site.options].slice(1);
+  if (sites.length !== options.length || sites.some((s, i) => s.id !== options[i].value || s.name !== options[i].text)) {
+    const chosen = site.value;
+    site.replaceChildren(new Option('Tutti i siti', ''), ...sites.map(s => new Option(s.name, s.id)));
+    if (sites.some(s => s.id === chosen)) site.value = chosen;
   }
-  const wanted = JSON.stringify(state.sources.map((s) => [s.source, sourceOptionLabel(s)]));
+  const sources = state.sources.filter(s => !site.value || s.site === (site.value === '~' ? '' : site.value));
+  const wanted = JSON.stringify(sources.map(s => [s.source, sourceOptionLabel(s)]));
   const current = JSON.stringify([...select.options].slice(1).map((o) => [o.value, o.textContent]));
   if (wanted === current) return;
 
   select.replaceChildren(new Option('Tutte le sorgenti', ''));
-  for (const source of state.sources) {
+  for (const source of sources) {
     select.add(new Option(sourceOptionLabel(source), source.source));
   }
 
@@ -356,21 +431,38 @@ function syncSourceSelect() {
       /* indirizzo non valido: si lascia «Tutte le sorgenti» */
     }
   }
-  if (state.sources.some((s) => s.source === chosen)) select.value = chosen;
+  if (sources.some((s) => s.source === chosen)) select.value = chosen;
 }
 
-async function refresh() {
-  if (refreshing) return;
-  refreshing = true;
+function refresh(afterMutation = false) {
+  if (statusRequest) return afterMutation === true ? statusRequest.then(() => refresh()) : statusRequest;
+  statusRequest = readStatus(afterMutation === 'poll').finally(() => { statusRequest = null; });
+  return statusRequest;
+}
+
+async function readStatus(poll = false) {
   try {
-    state = await api('status');
+    const generation = state.collection.generation;
+    const next = await api('status', poll && generation !== undefined ? { generation } : {});
+    if (next.unchanged) {
+      state.collection = next.collection;
+      if (next.live) state.live = next.live;
+      renderLive();
+      $('connection-status').textContent = 'Collegato';
+      $('footer-status').textContent = 'in funzione';
+      if (view === 'sources') $('collection-status').textContent = collectionStatusText(next.collection);
+      return;
+    }
+    state = next;
     $('version').textContent = 'Versione ' + state.version;
     $('data-dir').textContent = state.archive_directory;
     $('connection-status').textContent = 'Collegato';
     $('footer-status').textContent = 'in funzione';
     syncSourceSelect();
     renderProblems(state.problems || []);
-    renderSources();
+    renderLive();
+    if (view === 'sources') renderSources();
+    if (view === 'site') renderSite(location.hash.split('/')[1]);
     if (view === 'logs') {
       renderLogStatus();
     }
@@ -378,8 +470,6 @@ async function refresh() {
     $('connection-status').textContent = 'Non collegato';
     $('footer-status').textContent = error.message;
     if (view === 'sources' || view === 'logs') showNotice(error.message, true);
-  } finally {
-    refreshing = false;
   }
 }
 
@@ -552,241 +642,16 @@ function currentQuery() {
 }
 
 function clearSearch() {
+  if (location.hash.startsWith('#logs/')) history.replaceState(null, '', '#logs');
   $('search-site').value=''; $('search-question').value=''; $('live').disabled=false;
+  syncSourceSelect();
+  $('search-source').value = '';
   for (const id of ['search-ip', 'search-path', 'search-status']) $(id).value = '';
   for (const name of LEVEL_CHECKS) $('show-' + name).checked = true;
   $('search-text').value = '';
   $('search-from').value = '';
   $('search-to').value = '';
   search();
-}
-
-// ---------- aggiunta di una sorgente ----------
-
-function showWizardStep(step) {
-  for (const item of document.querySelectorAll('[data-step]')) {
-    item.classList.toggle('current', Number(item.dataset.step) === step);
-  }
-  $('add-type').hidden = step !== 1;
-  $('folder-step').hidden = !(step === 2 && (['folder','caddy','traefik'].includes(addKind)));
-  $('podman-step').hidden = !(step === 2 && (addKind === 'podman' || addKind === 'docker'));
-  $('kubernetes-step').hidden = !(step === 2 && addKind === 'kubernetes');
-  $('journal-step').hidden = !(step === 2 && addKind === 'journal');
-  $('save-source').hidden = step !== 3;
-}
-
-async function openFolder(path = '') {
-  folder = await api('folders', { path });
-  $('folder-path').value = folder.path;
-  $('folder-parent').disabled = !folder.parent;
-
-  const items = $('folder-items');
-  items.replaceChildren();
-  for (const subfolder of folder.folders) {
-    const button = element('button', '▱  ' + subfolder.split('/').pop());
-    button.type = 'button';
-    button.addEventListener('click', () => perform(button, () => openFolder(subfolder)));
-    items.append(button);
-  }
-  if (folder.folders.length === 0) items.append(element('p', 'Nessuna sottocartella.', 'muted'));
-
-  const count = folder.logs.length;
-  $('log-count').textContent =
-    count === 0
-      ? 'Nessun file .log in questa cartella'
-      : count === 1
-        ? '1 file .log trovato'
-        : count + ' file .log trovati';
-  $('log-files').replaceChildren(...folder.logs.map(logFileItem));
-}
-
-// Per Caddy ogni file .log è un pulsante: si sceglie il file attivo, non la cartella.
-function logFileItem(file) {
-  const item = element('li');
-  const name = file.split('/').pop();
-  if (!['caddy','traefik'].includes(addKind)) {
-    item.textContent = name;
-    return item;
-  }
-  const button = element('button', name + ' — usa questo file →');
-  button.type = 'button';
-  button.addEventListener('click', () => {
-    const stem = name.replace(/\.log$/, '');
-    const caddy=addKind==='caddy';
-    configureSource({ kind:caddy?'caddy':'file', path:file }, (caddy?'Caddy':'Traefik')+' · '+file,(caddy?'caddy-':'traefik-')+stem);
-    $('source-kind').value = 'access';
-  });
-  item.append(button);
-  return item;
-}
-
-// Adatta il passo «cartella» al tipo scelto (cartella intera o log di Caddy).
-function prepareFolderStep() {
-  const caddy = addKind === 'caddy';
-  $('folder-step-title').textContent = caddy
-    ? 'Dov\'è il log di Caddy?'
-    : 'Quale cartella vuoi seguire?';
-  $('folder-step-help').textContent = caddy
-    ? 'Apri la cartella dei log di Caddy (spesso /var/log/caddy) e scegli il file su cui ' +
-      'scrive, di solito access.log.'
-    : 'Naviga tra le cartelle del computer su cui gira Loglem, oppure scrivi il percorso e ' +
-      'premi Invio.';
-  $('folder-preview-help').textContent = caddy
-    ? 'I file ruotati da Caddy (es. access-2026-11-16T10-00-00.000.log) vengono letti in automatico.'
-    : 'Vengono letti i file .log di questa cartella, anche quelli futuri. Le sottocartelle sono escluse.';
-  $('use-folder').hidden = caddy || addKind==='traefik';
-}
-
-function containerChoice(c, connection) {
-  const label = element('label', undefined, 'container-choice');
-  const radio = element('input');
-  radio.type = 'radio';
-  radio.name = 'container';
-  radio.value = c.id;
-  radio.addEventListener('change', async () => {
-    container = { ...c, connection };
-    $('use-podman').disabled = false;
-    $('follow-name-box').hidden = true;
-    try {
-      const logs = await api('container-logs', { runtime: addKind, connection, container: c.id });
-      if (container?.id !== c.id || container.connection !== connection) return;
-      $('follow-name-box').hidden = !logs.journald;
-      $('follow-by-name').checked = true; // la scelta consigliata, a ogni nuovo container
-    } catch (_) {
-      // Facoltativo: senza questa informazione resta la lettura normale del container.
-    }
-  });
-  const text = element('div');
-  const details =
-    (c.pod ? 'Pod ' + c.pod + ' · ' : '') + (c.state || 'stato sconosciuto') + ' · ' + c.id.slice(0, 12);
-  text.append(element('strong', c.name || c.id.slice(0, 12)), element('small', details));
-  label.append(radio, text);
-  return label;
-}
-
-async function loadContainers() {
-  container = null;
-  $('follow-name-box').hidden = true;
-  $('use-podman').disabled = true;
-  const list = $('container-list');
-  list.replaceChildren(element('p', 'Cerco i container…', 'muted'));
-  try {
-    const connection = $('connection').value.trim() || null;
-    const data = await api('podman', { connection, runtime: addKind });
-    list.replaceChildren();
-    if (data.containers.length === 0) {
-      list.append(
-        element(
-          'p',
-          'Non trovo nessun container. Controlla che Podman sia installato e che i container ' +
-            'siano stati creati dallo stesso utente che ha avviato Loglem.',
-          'muted',
-        ),
-      );
-      return;
-    }
-    for (const c of data.containers) list.append(containerChoice(c, connection));
-  } catch (error) {
-    list.replaceChildren(element('div', error.message, 'card-error'));
-    throw error;
-  }
-}
-
-async function loadJournalUnits() {
-  const list = $('journal-units');
-  list.replaceChildren(element('p', 'Leggo i servizi presenti nel journal…', 'muted'));
-  try {
-    const { units } = await api('journal-units');
-    list.replaceChildren();
-    if (units.length === 0) {
-      list.append(element('p', 'Nessun servizio trovato: verrà letto tutto il journal.', 'muted'));
-    }
-    for (const unit of units) {
-      const label = element('label', undefined, 'container-choice');
-      const box = element('input');
-      box.type = 'checkbox';
-      box.value = unit;
-      label.append(box, element('strong', unit));
-      list.append(label);
-    }
-  } catch (error) {
-    list.replaceChildren(element('div', error.message, 'card-error'));
-    throw error;
-  }
-}
-
-function journalFilter() {
-  const units = [...document.querySelectorAll('#journal-units input:checked')].map((b) => b.value);
-  const identifiers = $('journal-identifiers')
-    .value.split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const priority = $('journal-priority').value;
-  return { units, identifiers, priority: priority === '' ? null : Number(priority) };
-}
-
-function describeJournal(filter) {
-  const parts = [];
-  if (filter.units.length) parts.push('servizi ' + filter.units.join(', '));
-  if (filter.identifiers.length) parts.push('programmi ' + filter.identifiers.join(', '));
-  return parts.length ? parts.join(' · ') : 'tutto il journal';
-}
-
-// Log trovati nelle configurazioni dei server web: si aggiungono con un clic.
-async function loadDiscovered() {
-  const list = $('discovered-list');
-  list.replaceChildren();
-  $('discovered').hidden = true;
-  try {
-    const { found } = await api('discover');
-    for (const item of found) {
-      const row = element('div', undefined, 'discovered-row');
-      const text = element('div');
-      text.append(element('strong', item.program + ' · ' + item.path), element('small', 'da ' + item.from));
-      const add = element('button', 'Aggiungi →', 'primary');
-      add.type = 'button';
-      add.addEventListener('click', () => {
-        const name = item.path.split('/').pop().replace(/\.log$/, '');
-        addKind = item.kind;
-        configureSource(
-          { kind: item.kind, path: item.path },
-          item.program + ' · ' + item.path,
-          item.program.toLowerCase() + '-' + name,
-        );
-        $('source-kind').value = name.includes('error') ? 'error' : 'access';
-      });
-      row.append(text, add);
-      list.append(row);
-    }
-    $('discovered').hidden = found.length === 0;
-  } catch (_) {
-    // Solo un suggerimento: se non funziona, resta la scelta manuale.
-  }
-}
-
-// Passa all'ultimo passaggio proponendo un nome libero.
-function configureSource(source, description, suggestion) {
-  selected = source;
-  $('chosen-source').textContent = description;
-  // Il wizard passa i filtri sotto journal/kubernetes, l'API usa il formato delle sorgenti salvate.
-  const input = { ...source, ...source.journal, ...source.kubernetes };
-  if (source.kind === 'caddy') input.kind = 'file';
-  if (source.kind === 'docker') input.context = source.connection;
-  $('source-original-retention').replaceChildren(originalRetentionNote(input, null, source.kind === 'caddy'));
-  const base = suggestion.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 48) || 'logs';
-  let name = base;
-  let n = 2;
-  while (state.sources.some((s) => s.source === name)) name = base + '-' + n++;
-  $('source-name').value = name;
-  $('source-days').value = 28;
-  $('source-unit').value = 'days';
-  $('source-kind').value = 'generic';
-  $('source-storage').value = 'default';
-  $('source-archive-dir').value = '';
-  updateStorage('source');
-  $('archive-location').textContent = state.archive_directory + '/archives/' + name + '.db';
-  showWizardStep(3);
-  $('source-name').focus();
 }
 
 // ---------- suggerimenti sui dati personali ----------
@@ -799,9 +664,9 @@ const ADVICE_STATE = {
   declined: ['Non ti riguarda', 'waiting'],
   later: ['Rimandato', 'waiting'],
 };
-const adviceCache = new Map(); // sorgente → { at, open, important }
+const adviceCache = new Map();
 let adviceWatch = 0;
-let adviceWatchSource = null; // la sorgente appena aggiunta, a cui si riferisce il pannello
+let adviceSite = null;
 
 function adviceItem(item, name, compact, reload) {
   const box = element('article', undefined, 'advice-item' + (item.important ? ' important' : ''));
@@ -946,53 +811,56 @@ async function loadAdvice(name, box, compact) {
 }
 
 // Dopo aver aggiunto una sorgente: aspetta le prime righe, poi mostra i suggerimenti aperti.
-async function watchNewSource(name) {
+async function watchNewSource(name, site) {
   const run = ++adviceWatch;
-  adviceWatchSource = name;
+  adviceSite = site;
   const panel = $('advice-panel');
   panel.hidden = true;
   for (let i = 0; i < 40 && run === adviceWatch; i++) {
     await sleep(3000);
-    if (run !== adviceWatch) return;
+    if (run !== adviceWatch || location.hash !== '#site/' + site) return;
     const report = await loadAdvice(name, panel, true);
+    if (location.hash !== '#site/' + site) panel.hidden = true;
     if (!report || report.findings) return;
     panel.hidden = true; // ancora nessuna riga: niente pannello vuoto
   }
 }
 
 function rememberAdvice(name, report) {
-  const open = report.items.filter((i) => i.state === 'open');
-  adviceCache.set(name, { at: Date.now(), open: open.length, important: open.some((i) => i.important) });
+  const items = report.items.filter(item => item.state === 'open');
+  const titles = items.map(item => item.title);
+  adviceCache.set(name, { at: Date.now(), titles });
+  return titles;
 }
 
-// Una riga nella scheda della sorgente se ci sono suggerimenti aperti.
+// Share the sample between the site's card and its detail page.
+const pendingAdvice = new Map();
 function adviceNote(source) {
   const note = element('p', undefined, 'advice-note admin-only');
-  note.hidden = true;
-  const show = (cached) => {
-    if (!cached || cached.open === 0) return;
-    note.replaceChildren(
-      link(
-        (cached.important ? '⚠ ' : '') +
-          (cached.open === 1 ? '1 suggerimento' : cached.open + ' suggerimenti') +
-          ' sui dati personali →',
-        '#settings/' + encodeURIComponent(source.source),
-        cached.important ? 'text-link advice-important' : 'text-link',
-      ),
-    );
-    note.hidden = false;
+  const show = titles => {
+    note.hidden = !titles.length;
+    if (!titles.length) return;
+    const text = titles[0] + (titles.length > 1 ? ' · +' + (titles.length - 1) : '');
+    const action = link(text, '#settings/' + source.source, 'text-link');
+    action.title = sourceOptionLabel(source) + ' · ' + titles.join(' · ');
+    note.replaceChildren(action);
   };
-  const cached = adviceCache.get(source.source);
-  show(cached);
-  if (!cached || Date.now() - cached.at > 60000) {
-    adviceCache.set(source.source, { ...(cached || { open: 0 }), at: Date.now() });
-    api('advice', { name: source.source })
-      .then((report) => {
-        rememberAdvice(source.source, report);
-        show(adviceCache.get(source.source));
+  const name = source.source;
+  const cached = adviceCache.get(name);
+  show(cached?.titles || []);
+  if (cached && Date.now() - cached.at <= 60000) return note;
+  if (!pendingAdvice.has(name)) {
+    const request = api('advice', {name})
+      .then(report => rememberAdvice(name, report))
+      .catch(() => {
+        const titles = cached?.titles || [];
+        adviceCache.set(name, {at: Date.now(), titles});
+        return titles;
       })
-      .catch(() => {});
+      .finally(() => pendingAdvice.delete(name));
+    pendingAdvice.set(name, request);
   }
+  pendingAdvice.get(name).then(show);
   return note;
 }
 
@@ -1034,6 +902,7 @@ async function loadStats() {
     const stats = await api('stats', { source: statsSource, days: Number($('stats-days').value) });
     $('stats-summary').textContent =
       stats.requests.toLocaleString('it-IT') + ' richieste riconosciute' +
+      (stats.approximate ? ' · Classifica approssimata' : '') +
       (stats.other_lines ? ' · ' + stats.other_lines.toLocaleString('it-IT') + ' righe di altro formato' : '');
     const body = $('stats-body');
     body.replaceChildren(
@@ -1049,7 +918,7 @@ async function loadStats() {
     if (stats.requests === 0) {
       body.replaceChildren(
         element('p', 'Nessuna richiesta HTTP riconosciuta: le statistiche valgono per i log di ' +
-          'accesso di Caddy (JSON) e Nginx o Apache (formato combined).', 'muted'),
+          'accesso con codice e percorso, in JSON, common/combined o logfmt, di qualsiasi programma.', 'muted'),
       );
     }
   } catch (error) {
@@ -1289,13 +1158,13 @@ async function loadDiagnostics() {
 // ---------- navigazione ----------
 
 function route() {
-  const [requested, id = ''] = location.hash.slice(1).split('/');
+  const [requested, id = '', scope] = location.hash.slice(1).split('/');
   view = Object.hasOwn(PAGES, requested) ? requested : 'sources';
 
   for (const section of document.querySelectorAll('[data-view]')) {
     section.hidden = section.dataset.view !== view;
   }
-  const activeNav = view === 'settings' ? 'sources' : view;
+  const activeNav = ['settings', 'site', 'new-site'].includes(view) ? 'sources' : view;
   for (const item of document.querySelectorAll('[data-nav]')) {
     if (item.dataset.nav === activeNav) item.setAttribute('aria-current', 'page');
     else item.removeAttribute('aria-current');
@@ -1305,30 +1174,51 @@ function route() {
   $('page-title').textContent = title;
   $('page-subtitle').textContent = subtitle;
   $('breadcrumb').textContent = title.toUpperCase();
-  $('header-add').hidden = view === 'add';
+  $('header-add').hidden = view !== 'sources';
   document.title = 'Loglem · ' + title;
   hideNotice();
   stopLive();
 
   if (view === 'logs') {
-    if(id){$('search-site').value=''; $('search-question').value=''; $('live').disabled=false;}
+    const siteSearch = id === 'site' && scope;
+    if (siteSearch && ![...$('search-site').options].some(o => o.value === scope)) {
+      $('search-results').replaceChildren();
+      $('result-count').textContent = 'Sito non trovato';
+      return;
+    }
+    if (id) {
+      $('search-site').value = siteSearch ? scope : '';
+      $('search-question').value = '';
+      $('live').disabled = !!siteSearch;
+      if (siteSearch) $('live').checked = false;
+      syncSourceSelect();
+    }
     try {
-      $('search-source').value = id ? decodeURIComponent(id) : '';
+      $('search-source').value = id && !siteSearch ? decodeURIComponent(id) : '';
     } catch (_) {
       $('search-source').value = '';
     }
-    // Il pannello «Cosa ho trovato nel log» vale solo per la sorgente appena aggiunta.
-    if ($('search-source').value !== adviceWatchSource) $('advice-panel').hidden = true;
     renderLogStatus();
     search();
   } else if (view === 'sources') {
     lastSignature = '';
     renderSources();
+  } else if (view === 'site') {
+    copyScope = '';
+    if (adviceSite !== id) $('advice-panel').hidden = true;
+    detailSignature = '';
+    previewSignature = '';
+    renderSite(id);
+  } else if (view === 'new-site') {
+    $('new-site-form').reset();
+    $('new-site-name').focus();
   } else if (view === 'add') {
-    selected = null;
-    container = null;
-    showWizardStep(1);
-    loadDiscovered();
+    if (id && !Object.hasOwn(state.sites, id)) {
+      location.hash = '#sources';
+      return;
+    }
+    if (id) $('page-title').textContent = 'Aggiungi un log · ' + state.sites[id].name;
+    openAdd(id);
   } else if (view === 'settings') {
     try {
       settingsSource = state.sources.find((s) => s.source === decodeURIComponent(id));
@@ -1339,10 +1229,15 @@ function route() {
     $('settings-title').textContent = settingsSource
       ? settingsSource.label || settingsSource.source
       : 'Sorgente non trovata';
+    $('settings-back').href = settingsSource ? '#site/' + (settingsSource.site || '~') : '#sources';
+    $('settings-back').textContent = settingsSource ? '← Torna al sito' : '← Tutti i siti';
     if (settingsSource) populateSettings();
   } else if (view === 'rules' || view === 'system') {
     loadRulesPage().catch(e=>showNotice(e.message,true));
-    if (view === 'system') showUpdateStatus();
+    if (view === 'system') {
+      showUpdateStatus();
+      loadSystemPanels();
+    }
   } else if (view === 'diagnostics') {
     loadDiagnostics();
   } else if (view === 'privacy') {
@@ -1357,170 +1252,13 @@ function route() {
 
 // ---------- eventi ----------
 
-for (const kind of ['folder', 'caddy']) {
-  const button = $('choose-' + kind);
-  button.addEventListener('click', () =>
-    perform(button, async () => {
-      addKind = kind;
-      prepareFolderStep();
-      showWizardStep(2);
-      await openFolder();
-    }),
-  );
-}
-
-for (const runtime of ['podman', 'docker']) {
-  const button = $('choose-' + runtime);
-  button.addEventListener('click', () =>
-    perform(button, async () => {
-      addKind = runtime;
-      $('podman-step-title').textContent =
-        'Quale container ' + (runtime === 'docker' ? 'Docker' : 'Podman') + ' vuoi seguire?';
-      showWizardStep(2);
-      await loadContainers();
-    }),
-  );
-}
-
-// ---------- Kubernetes ----------
-
-let chosenPod = null;
-
-async function loadPods() {
-  chosenPod = null;
-  $('use-kubernetes').disabled = true;
-  const list = $('kubernetes-pods');
-  list.replaceChildren(element('p', 'Chiedo i pod a kubectl…', 'muted'));
-  try {
-    const { pods } = await api('kubernetes-pods');
-    list.replaceChildren();
-    if (pods.length === 0) list.append(element('p', 'Nessun pod trovato nel cluster.', 'muted'));
-    for (const pod of pods) {
-      const label = element('label', undefined, 'container-choice');
-      const radio = element('input');
-      radio.type = 'radio';
-      radio.name = 'pod';
-      radio.addEventListener('change', () => {
-        chosenPod = pod;
-        $('use-kubernetes').disabled = false;
-        $('kubernetes-follow-app').disabled = !pod.app;
-      });
-      const text = element('div');
-      const app = pod.app ? ' · app=' + pod.app : '';
-      text.append(element('strong', pod.namespace + '/' + pod.name), element('small', pod.phase + app));
-      label.append(radio, text);
-      list.append(label);
-    }
-  } catch (error) {
-    list.replaceChildren(element('div', error.message, 'card-error'));
-    throw error;
-  }
-}
-
-$('choose-kubernetes').addEventListener('click', () =>
-  perform($('choose-kubernetes'), async () => {
-    addKind = 'kubernetes';
-    showWizardStep(2);
-    await loadPods();
-  }),
-);
-
-$('use-kubernetes').addEventListener('click', () => {
-  if (!chosenPod) return;
-  const byApp = $('kubernetes-follow-app').checked && chosenPod.app;
-  const target = byApp
-    ? { namespace: chosenPod.namespace, selector: 'app=' + chosenPod.app }
-    : { namespace: chosenPod.namespace, pod: chosenPod.name };
-  const description = byApp
-    ? 'Kubernetes · tutti i pod con app=' + chosenPod.app + ' in ' + chosenPod.namespace
-    : 'Kubernetes · pod ' + chosenPod.name;
-  configureSource({ kind: 'kubernetes', kubernetes: target }, description, byApp ? chosenPod.app : chosenPod.name);
-});
-
-for (const button of document.querySelectorAll('[data-back-type]')) {
-  button.addEventListener('click', () => {
-    hideNotice();
-    showWizardStep(1);
-  });
-}
-
-$('open-folder').addEventListener('click', () =>
-  perform($('open-folder'), () => openFolder($('folder-path').value)),
-);
-
-$('folder-path').addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    $('open-folder').click();
-  }
-});
-
-$('folder-parent').addEventListener('click', () =>
-  perform($('folder-parent'), () => openFolder(folder.parent)),
-);
-
-$('use-folder').addEventListener('click', () => {
-  if (!folder) return;
-  const name = folder.path.split('/').pop() || 'logs';
-  configureSource({ kind: 'folder', path: folder.path }, 'Cartella · ' + folder.path, name);
-});
-
-$('load-podman').addEventListener('click', () => perform($('load-podman'), loadContainers));
-
-$('choose-journal').addEventListener('click', () =>
-  perform($('choose-journal'), async () => {
-    addKind = 'journal';
-    showWizardStep(2);
-    await loadJournalUnits();
-  }),
-);
-
-$('use-journal').addEventListener('click', () => {
-  const filter = journalFilter();
-  const suggestion = filter.units.length === 1 ? filter.units[0].replace(/\.service$/, '') : 'journal';
-  configureSource({ kind: 'journal', journal: filter }, 'Journal · ' + describeJournal(filter), suggestion);
-});
-
-$('use-podman').addEventListener('click', () => {
-  if (!container) return;
-  if (!$('follow-name-box').hidden && $('follow-by-name').checked) {
-    const journal = { units: [], identifiers: [], matches: ['CONTAINER_NAME=' + container.name], priority: null };
-    configureSource({ kind: 'journal', journal, journal_runtime:addKind }, 'Container ' + container.name + ' (per nome, dal journal)', container.name);
-    return;
-  }
-  const runtime = addKind === 'docker' ? 'Docker' : 'Podman';
-  configureSource(
-    { kind: addKind, container: container.id, connection: container.connection },
-    'Container ' + runtime + ' · ' + container.name,
-    container.name,
-  );
-});
-
-$('save-source').addEventListener('submit', (event) => {
+$('new-site-form').addEventListener('submit', event => {
   event.preventDefault();
   perform(event.submitter, async () => {
-    if (!selected) return;
-    const name = $('source-name').value.trim();
-    const customStorage = $('source-storage').value === 'custom';
-    const result = await api('add', {
-      ...selected,
-      name,
-      retention: readPeriod('source-days', 'source-unit'),
-      log_kind: $('source-kind').value,
-      archive_dir: customStorage ? requiredFolder('source-archive-dir') : null,
-    });
-    await refresh();
-    selected = null;
-    location.hash = '#logs/' + encodeURIComponent(name);
-    showNotice('Sorgente salvata. Sto leggendo i log: le righe compariranno qui da sole.');
-    watchNewSource(name);
-    if (result.snippet) showCaddyDialog(result.snippet);
+    const {site} = await api('site-add', {name: $('new-site-name').value.trim()});
+    await refresh(true);
+    location.hash = '#site/' + site;
   });
-});
-
-$('cancel-add').addEventListener('click', () => {
-  selected = null;
-  location.hash = '#sources';
 });
 
 $('collect').addEventListener('click', () =>
@@ -1553,7 +1291,7 @@ const PERIOD_WORDS = { days: ['giorno', 'giorni'], months: ['mese', 'mesi'], yea
 const PERIOD_MAX = { days: 36500, months: 1200, years: 100 };
 
 function sourcePeriod(source) {
-  return source.retention || { amount: source.retention_days, unit: 'days' };
+  return source.retention;
 }
 
 function periodText(period) {
@@ -1587,10 +1325,9 @@ function populateSettings() {
   $('settings-original-retention').replaceChildren(originalRetentionNote(s.input, s));
   const isPodman = s.input.kind === 'podman';
   const hasFiles = s.input.kind === 'file' || s.input.kind === 'folder';
-  const isRotatedFile = s.input.kind === 'file' && Boolean(s.input.rotated_pattern);
 
   $('settings-label').value = s.label || s.source;
-  $('settings-kind').value = s.log_kind || 'generic';
+  $('settings-kind').value = s.log_kind || 'application';
   $('retention-days').disabled = $('retention-unit').disabled = !!s.class;
   $('retention-class-note').textContent = s.class ? 'Durata definita dalla classe '+s.class+' in Regole e siti.' : '';
   $('retention-days').value = period.amount;
@@ -1605,14 +1342,16 @@ function populateSettings() {
   $('podman-reconnect').hidden = !isPodman;
   showContainerAdvice(s);
   $('settings-source-path').value = s.input.path || '';
-  $('rotated-settings').hidden = !isRotatedFile;
+  $('cleanup-panel').hidden = !hasFiles;
+  $('rotated-settings').hidden = s.input.kind !== 'file';
+  $('handoff-choice').hidden = !hasFiles;
+  $('rotated-pattern').value = s.input.rotated_pattern || '';
   $('remove-rotated').checked = s.remove_rotated;
-  $('caddy-snippet-box').hidden = !s.remove_rotated;
-  if (s.remove_rotated) loadCaddySnippet(s.input.path);
   $('cleanup-mode').value = s.completed_dir ? 'handoff' : 'keep';
   $('completed-dir').value = s.completed_dir || '';
   $('handoff-confirmed').checked = false;
   $('cleanup-settings').hidden = !s.completed_dir;
+  if (hasFiles) refreshCleanup();
 
   const paused = !s.enabled || s.detached;
   $('pause-source').textContent = paused ? 'Riprendi la raccolta' : 'Metti in pausa';
@@ -1639,19 +1378,6 @@ async function showContainerAdvice(source) {
   }
 }
 
-async function loadCaddySnippet(path) {
-  try {
-    const { snippet } = await api('caddy-snippet', { path });
-    $('caddy-snippet').textContent = snippet;
-  } catch (_) {
-    $('caddy-snippet-box').hidden = true;
-  }
-}
-
-function showCaddyDialog(snippet) {
-  $('caddy-dialog-snippet').textContent = snippet;
-  $('caddy-dialog').showModal();
-}
 
 // Raccoglie dal modulo solo ciò che serve: il percorso parte solo se è stato cambiato,
 // così una sorgente con la cartella sparita resta modificabile.
@@ -1669,8 +1395,13 @@ function settingsChange() {
 
   const path = $('settings-source-path').value.trim();
   if (path && path !== s.input.path) change.path = path;
-  if (s.input.kind === 'file' && s.input.rotated_pattern) {
-    change.remove_rotated = $('remove-rotated').checked;
+  if (s.input.kind === 'file') {
+    const pattern = $('rotated-pattern').value.trim();
+    if ($('remove-rotated').checked && !pattern) {
+      throw new Error('Per far cancellare i file ruotati a Loglem scrivi prima come si chiamano («Nomi dei file ruotati»).');
+    }
+    if (pattern !== (s.input.rotated_pattern || '')) change.rotated_pattern = pattern;
+    change.remove_rotated = $('remove-rotated').checked && pattern !== '';
   }
   const handoff = $('cleanup-mode').value === 'handoff';
   change.completed_dir = handoff ? requiredFolder('completed-dir') : '';
@@ -1690,6 +1421,8 @@ $('retention-form').addEventListener('submit', (event) => {
       'Impostare ' + periodText(change.retention) + '? ' +
       'Alla prossima lettura le copie oltre questa durata saranno eliminate.';
     if (changed && !confirm(question)) return;
+    const warning = cleanupTurnedOn(change);
+    if (warning && !confirm(warning)) return;
     await api('source-settings', change);
     await refresh();
     location.hash = '#sources';
@@ -1697,11 +1430,72 @@ $('retention-form').addEventListener('submit', (event) => {
   });
 });
 
-$('source-storage').addEventListener('change', () => updateStorage('source'));
 $('settings-storage').addEventListener('change', () => updateStorage('settings'));
 $('cleanup-mode').addEventListener('change', () => {
   $('cleanup-settings').hidden = $('cleanup-mode').value !== 'handoff';
+  refreshCleanup();
 });
+$('remove-rotated').addEventListener('change', refreshCleanup);
+$('use-suggested-pattern').addEventListener('click', () => {
+  $('rotated-pattern').value = $('use-suggested-pattern').dataset.pattern;
+  $('use-suggested-pattern').hidden = true;
+});
+
+// Cosa succede se si salva: scritto prima, con parole semplici, perché cancellare non si annulla.
+function cleanupWarningText(rotated, handoff) {
+  const s = settingsSource;
+  const keep = periodText(readPeriod('retention-days', 'retention-unit'));
+  const parts = [];
+  if (rotated) {
+    const name = (s.input.path || '').split('/').pop();
+    parts.push('ogni file ruotato di «' + name + '» (nomi come «' + $('rotated-pattern').value.trim() + '»)');
+  }
+  if (handoff) parts.push('ogni file .log nella cartella «' + $('completed-dir').value.trim() + '»');
+  return 'Attenzione: da ora Loglem cancellerà ' + parts.join(' e ') +
+    ' dopo averlo archiviato, controllato riga per riga e dopo 24 ore senza modifiche. ' +
+    'Il file su cui il programma scrive non viene toccato. La cancellazione non si annulla: ' +
+    'resta solo la copia di Loglem, per ' + keep + '.';
+}
+
+// Vero solo se la pulizia viene accesa adesso (non se era già accesa): serve la conferma.
+function cleanupTurnedOn(change) {
+  const s = settingsSource;
+  const rotated = change.remove_rotated === true && !s.remove_rotated;
+  const handoff = Boolean(change.completed_dir) && change.completed_dir !== (s.completed_dir || '');
+  return rotated || handoff ? cleanupWarningText(rotated, handoff) : '';
+}
+
+let cleanupRequest = 0;
+// Il riquadro «Pulizia dei file originali» segue le scelte fatte nel modulo, anche prima di salvare.
+async function refreshCleanup() {
+  const s = settingsSource;
+  if (!s || (s.input.kind !== 'file' && s.input.kind !== 'folder')) return;
+  const request = ++cleanupRequest;
+  const rotated = s.input.kind === 'file' && $('remove-rotated').checked;
+  const handoff = $('cleanup-mode').value === 'handoff';
+  const headline = $('cleanup-headline');
+  try {
+    const r = await api('cleanup', { name: s.source, rotated, handoff });
+    if (request !== cleanupRequest) return;
+    headline.textContent = r.headline;
+    headline.className = 'cleanup-headline cleanup-' + r.level;
+    $('cleanup-notes').replaceChildren(
+      ...r.notes.map((n) => element('li', n.text, 'cleanup-' + n.level)),
+    );
+    const button = $('use-suggested-pattern');
+    const current = $('rotated-pattern').value.trim();
+    button.hidden = !r.suggested_pattern || r.suggested_pattern === current;
+    if (!button.hidden) {
+      button.dataset.pattern = r.suggested_pattern;
+      button.textContent = 'Usa «' + r.suggested_pattern + '»';
+    }
+    const warning = $('cleanup-warning');
+    warning.hidden = !(rotated || handoff);
+    if (!warning.hidden) warning.textContent = cleanupWarningText(rotated, handoff);
+  } catch (error) {
+    if (request === cleanupRequest) headline.textContent = error.message;
+  }
+}
 
 $('pause-source').addEventListener('click', () =>
   perform($('pause-source'), async () => {
@@ -1812,18 +1606,6 @@ $('storage-browser-use').addEventListener('click', () => {
 });
 $('storage-browser-cancel').addEventListener('click', () => $('storage-dialog').close());
 
-// ---------- finestra Caddy ----------
-
-$('caddy-dialog-close').addEventListener('click', () => $('caddy-dialog').close());
-$('caddy-dialog-copy').addEventListener('click', async () => {
-  try {
-    await navigator.clipboard.writeText($('caddy-dialog-snippet').textContent);
-    $('caddy-dialog-copy').textContent = 'Copiato ✓';
-  } catch (_) {
-    $('caddy-dialog-copy').textContent = 'Selezionalo e copialo a mano';
-  }
-});
-
 $('reload-diagnostics').addEventListener('click', () =>
   perform($('reload-diagnostics'), loadDiagnostics),
 );
@@ -1848,5 +1630,5 @@ window.addEventListener('DOMContentLoaded', async () => {
   await loadUser().catch(() => {});
   await refresh();
   route();
-  setInterval(refresh, REFRESH_MS);
+  setInterval(() => refresh('poll'), REFRESH_MS);
 });

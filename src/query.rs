@@ -1,12 +1,12 @@
 //! Cosa cercare nei log: testo e filtri facoltativi, tradotti in condizioni SQL.
 //!
-//! I log non hanno un formato fisso, quindi gravità, codice di risposta e percorso
-//! si riconoscono dal testo della riga (JSON di Caddy, formato «combined» di Nginx e
-//! Apache, journal). Sono filtri pratici, non un'analisi completa del formato.
+//! I log non hanno un formato fisso: gravità e codice di risposta si riconoscono dal
+//! contenuto della riga con `crate::formats` (JSON, common/combined, syslog, logfmt), per
+//! qualsiasi programma. Indirizzo IP e percorso si cercano come testo.
 use rusqlite::types::Value;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Level {
     /// Errori e più gravi.
@@ -25,6 +25,16 @@ pub enum Severity {
     Error,
 }
 
+impl Level {
+    /// La gravità più bassa che passa il filtro (0 informazione, 1 avviso, 2 errore).
+    pub fn minimum(self) -> u8 {
+        match self {
+            Level::Error => Severity::Error as u8,
+            Level::Warning => Severity::Warning as u8,
+        }
+    }
+}
+
 impl Severity {
     pub fn name(self) -> &'static str {
         match self {
@@ -37,72 +47,33 @@ impl Severity {
 
 /// La gravità di una riga, con le stesse regole dei filtri.
 pub fn severity(line: &str) -> Severity {
-    if ERROR_MARKS.iter().any(|m| line.contains(m)) {
-        Severity::Error
-    } else if WARNING_MARKS.iter().any(|m| line.contains(m)) {
-        Severity::Warning
-    } else {
-        Severity::Info
-    }
+    crate::formats::severity(line)
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, clap::Args)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Query {
     /// Testo da cercare (vuoto = tutto).
-    #[arg(long, default_value = "")]
     #[serde(default)]
     pub text: String,
     /// Non distinguere maiuscole e minuscole.
-    #[arg(long)]
     #[serde(default)]
     pub ignore_case: bool,
     /// Solo righe di questa gravità o più gravi.
-    #[arg(long, value_enum)]
     #[serde(default)]
     pub level: Option<Level>,
     /// Solo le righe di queste gravità (vuoto o tutte e tre = non filtra). Lo usa la pagina web.
-    #[arg(skip)]
     #[serde(default)]
     pub only: Vec<Severity>,
     /// Solo righe che contengono questo indirizzo IP.
-    #[arg(long)]
     #[serde(default)]
     pub ip: Option<String>,
     /// Solo richieste a questo percorso (es. /login).
-    #[arg(long)]
     #[serde(default)]
     pub path: Option<String>,
     /// Solo risposte con questo codice (es. 404).
-    #[arg(long)]
     #[serde(default)]
     pub status: Option<u16>,
 }
-
-/// Come compaiono gli errori nei formati più comuni.
-const ERROR_MARKS: &[&str] = &[
-    "\"level\":\"error\"",
-    "\"level\":\"fatal\"",
-    "\"level\":\"panic\"",
-    "\"PRIORITY\":\"0\"",
-    "\"PRIORITY\":\"1\"",
-    "\"PRIORITY\":\"2\"",
-    "\"PRIORITY\":\"3\"",
-    "ERROR",
-    "FATAL",
-    "CRITICAL",
-    "PANIC",
-    "[error]",
-    "[crit]",
-    "[alert]",
-    "[emerg]",
-];
-const WARNING_MARKS: &[&str] = &[
-    "\"level\":\"warn",
-    "\"PRIORITY\":\"4\"",
-    "WARN",
-    "[warn]",
-    "Warning",
-];
 
 impl Query {
     /// Vero se la riga corrisponde ai filtri, con le stesse regole di `sql()`:
@@ -111,7 +82,8 @@ impl Query {
         let has = |needle: &str| line.contains(needle);
         if !self.text.is_empty() {
             let found = if self.ignore_case {
-                line.to_lowercase().contains(&self.text.to_lowercase())
+                line.to_ascii_lowercase()
+                    .contains(&self.text.to_ascii_lowercase())
             } else {
                 has(&self.text)
             };
@@ -125,19 +97,12 @@ impl Query {
             }
         }
         if let Some(status) = self.status {
-            if !has(&format!("\"status\":{status}"))
-                && !has(&format!("\"DownstreamStatus\":{status}"))
-                && !has(&format!("\" {status} "))
-            {
+            if crate::formats::status(line) != Some(status) {
                 return false;
             }
         }
         if let Some(level) = self.level {
-            let mut marks = ERROR_MARKS.to_vec();
-            if level == Level::Warning {
-                marks.extend(WARNING_MARKS);
-            }
-            if !marks.iter().any(|m| has(m)) {
+            if (severity(line) as u8) < level.minimum() {
                 return false;
             }
         }
@@ -167,7 +132,7 @@ impl Query {
         if !self.text.is_empty() {
             if self.ignore_case {
                 sql.push_str(" AND instr(lower(message), ?) > 0");
-                params.push(Value::Text(self.text.to_lowercase()));
+                params.push(Value::Text(self.text.to_ascii_lowercase()));
             } else {
                 sql.push_str(" AND instr(message, ?) > 0");
                 params.push(Value::Text(self.text.clone()));
@@ -180,42 +145,21 @@ impl Query {
             }
         }
         if let Some(status) = self.status {
-            // JSON di Caddy: "status":404 · formato combined: "GET / HTTP/1.1" 404
-            sql.push_str(
-                " AND (instr(message, ?) > 0 OR instr(message, ?) > 0 OR instr(message, ?) > 0)",
-            );
-            params.push(Value::Text(format!("\"status\":{status}")));
-            params.push(Value::Text(format!("\" {status} ")));
-            params.push(Value::Text(format!("\"DownstreamStatus\":{status}")));
+            // Le funzioni sono registrate da `crate::formats::register` su ogni archivio.
+            sql.push_str(" AND loglem_status(message) = ?");
+            params.push(Value::Integer(i64::from(status)));
         }
         if let Some(level) = self.level {
-            let mut marks = ERROR_MARKS.to_vec();
-            if level == Level::Warning {
-                marks.extend(WARNING_MARKS);
-            }
-            let any = vec!["instr(message, ?) > 0"; marks.len()].join(" OR ");
-            sql.push_str(&format!(" AND ({any})"));
-            params.extend(marks.iter().map(|m| Value::Text((*m).to_owned())));
+            sql.push_str(" AND loglem_severity(message) >= ?");
+            params.push(Value::Integer(i64::from(level.minimum())));
         }
         if self.filters_severity() {
-            let is_error = vec!["instr(message, ?) > 0"; ERROR_MARKS.len()].join(" OR ");
-            let is_warning = vec!["instr(message, ?) > 0"; WARNING_MARKS.len()].join(" OR ");
-            let mut parts = Vec::new();
-            if self.only.contains(&Severity::Error) {
-                parts.push(format!("({is_error})"));
-                params.extend(ERROR_MARKS.iter().map(|m| Value::Text((*m).to_owned())));
-            }
-            if self.only.contains(&Severity::Warning) {
-                parts.push(format!("(NOT ({is_error}) AND ({is_warning}))"));
-                params.extend(ERROR_MARKS.iter().map(|m| Value::Text((*m).to_owned())));
-                params.extend(WARNING_MARKS.iter().map(|m| Value::Text((*m).to_owned())));
-            }
-            if self.only.contains(&Severity::Info) {
-                parts.push(format!("(NOT ({is_error}) AND NOT ({is_warning}))"));
-                params.extend(ERROR_MARKS.iter().map(|m| Value::Text((*m).to_owned())));
-                params.extend(WARNING_MARKS.iter().map(|m| Value::Text((*m).to_owned())));
-            }
-            sql.push_str(&format!(" AND ({})", parts.join(" OR ")));
+            let mut chosen = self.only.clone();
+            chosen.sort_by_key(|s| *s as u8);
+            chosen.dedup();
+            let marks = vec!["?"; chosen.len()].join(",");
+            sql.push_str(&format!(" AND loglem_severity(message) IN ({marks})"));
+            params.extend(chosen.iter().map(|s| Value::Integer(*s as i64)));
         }
         (sql, params)
     }
@@ -232,12 +176,13 @@ mod tests {
         "{\"level\":\"error\",\"status\":500,\"request\":{\"uri\":\"/boom\"}}",
         "{\"level\":\"info\",\"status\":404,\"request\":{\"uri\":\"/admin\"}}",
         "203.0.113.4 - - [17/Nov/2026:10:00:00 +0000] \"GET /login HTTP/1.1\" 200 5 \"-\" \"x\"",
-        "Login OK per Anna",
+        "Login OK per Anna, Città e CAFÉ",
     ];
 
     /// Le righe che la ricerca SQL trova.
     fn sql_rows(query: &Query) -> Vec<String> {
         let db = rusqlite::Connection::open_in_memory().unwrap();
+        crate::formats::register(&db).unwrap();
         db.execute(
             "CREATE TABLE entries(id INTEGER PRIMARY KEY, message TEXT)",
             [],
@@ -279,6 +224,17 @@ mod tests {
         let mut q = Query::text("login");
         q.ignore_case = true;
         assert_eq!(same(q).len(), 4);
+        for (text, expected) in [("cafÉ", 1), ("café", 0), ("città", 1)] {
+            assert_eq!(
+                same(Query {
+                    text: text.into(),
+                    ignore_case: true,
+                    ..Query::default()
+                })
+                .len(),
+                expected
+            );
+        }
         assert_eq!(
             same(Query {
                 ip: Some("203.0.113.4".into()),

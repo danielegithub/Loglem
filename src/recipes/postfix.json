@@ -1,0 +1,44 @@
+{
+  "id": "postfix",
+  "name": "Postfix",
+  "categories": [
+    "mail"
+  ],
+  "recognize": {
+    "configs": [
+      "/etc/postfix/main.cf"
+    ],
+    "images": [
+      "postfix"
+    ],
+    "units": [
+      "postfix.service",
+      "postfix@-.service"
+    ]
+  },
+  "logs": [
+    {
+      "path": "/var/log/mail.log",
+      "kind": "other",
+      "format": "syslog"
+    },
+    {
+      "path": "/var/log/maillog",
+      "kind": "other",
+      "format": "syslog"
+    }
+  ],
+  "journal": {
+    "units": [
+      "postfix.service",
+      "postfix@-.service"
+    ],
+    "identifiers": [
+      "postfix/smtpd",
+      "postfix/smtp",
+      "postfix/qmgr",
+      "postfix/cleanup"
+    ]
+  },
+  "rotation": "logrotate"
+}

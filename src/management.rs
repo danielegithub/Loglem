@@ -32,9 +32,32 @@ pub struct Change {
     pub enabled: Option<bool>,
     pub detached: Option<bool>,
     pub remove_rotated: Option<bool>,
+    /// Modello dei nomi dei file ruotati (es. `access.log.*`). Vuoto = nessuno.
+    pub rotated_pattern: Option<String>,
     pub path: Option<PathBuf>,
     pub container: Option<String>,
     pub connection: Option<String>,
+}
+
+/// Un modello dei nomi dei file ruotati è sicuro solo se parte dal nome del log: così non
+/// può includere altri file della stessa cartella, che Loglem poi cancellerebbe.
+fn checked_pattern(active: &Path, pattern: &str) -> Result<Option<String>> {
+    if pattern.is_empty() {
+        return Ok(None);
+    }
+    let name = active
+        .file_name()
+        .and_then(|n| n.to_str())
+        .context("Nome del file di log non valido")?;
+    let stem = name.strip_suffix(".log").unwrap_or(name);
+    if pattern.contains('/') || pattern.len() > 200 {
+        bail!("Il modello dei nomi non può contenere «/»");
+    }
+    if !pattern.starts_with(stem) || stem.is_empty() {
+        bail!("Il modello deve iniziare con «{stem}», il nome del file di log: così non include altri file della cartella");
+    }
+    glob::Pattern::new(pattern).context("Modello dei nomi non valido")?;
+    Ok(Some(pattern.to_owned()))
 }
 
 /// Elimina una sorgente con il suo storico. Solo se è in pausa o scollegata: una sorgente
@@ -93,10 +116,7 @@ pub fn apply(dir: &Path, change: Change) -> Result<Source> {
     }
     if let Some(retention) = change.retention {
         retention.validate()?;
-        source.retention = Some(retention);
-        if retention.unit == crate::model::RetentionUnit::Days {
-            source.retention_days = retention.amount;
-        }
+        source.retention = retention;
     }
     if let Some(kind) = change.log_kind {
         source.log_kind = kind;
@@ -114,7 +134,7 @@ pub fn apply(dir: &Path, change: Change) -> Result<Source> {
     if let Some(path) = change.path.filter(|p| !is_current_path(&source.input, p)) {
         let path = fs::canonicalize(path).context("La posizione della sorgente non esiste")?;
         match &mut source.input {
-            Input::Folder { path: current } => {
+            Input::Folder { path: current, .. } => {
                 if !path.is_dir() {
                     bail!("Scegli una cartella");
                 }
@@ -155,6 +175,19 @@ pub fn apply(dir: &Path, change: Change) -> Result<Source> {
             container: found.id,
             connection,
         };
+    }
+    if let Some(pattern) = change.rotated_pattern {
+        let Input::File {
+            path,
+            rotated_pattern,
+        } = &mut source.input
+        else {
+            bail!("Il modello dei file ruotati vale solo per un file singolo");
+        };
+        *rotated_pattern = checked_pattern(path, pattern.trim())?;
+        if rotated_pattern.is_none() {
+            source.remove_rotated = false;
+        }
     }
     if let Some(remove) = change.remove_rotated {
         if remove
@@ -292,7 +325,7 @@ fn relocate(old: &Path, new: &Path) -> Result<()> {
 
 fn is_current_path(input: &Input, requested: &Path) -> bool {
     match input {
-        Input::Folder { path } | Input::File { path, .. } => path == requested,
+        Input::Folder { path, .. } | Input::File { path, .. } => path == requested,
         Input::Podman { .. } | Input::Journal(_) | Input::Docker { .. } | Input::Kubernetes(_) => {
             false
         }
@@ -321,14 +354,17 @@ impl Cleanup {
 }
 
 /// Archivia, verifica ed elimina gli originali che la sorgente consegna come chiusi:
-/// i file nella cartella dei conclusi e, se attivo, i file ruotati (es. Caddy).
+/// i file nella cartella dei conclusi e, se attivo, i file ruotati.
 ///
 /// Ogni file è trattato da solo: un problema su uno non blocca gli altri.
 pub fn cleanup_originals(source: &Source, store: &mut Archive) -> Result<Cleanup> {
     let mut report = Cleanup::default();
     let (active, active_files) = match &source.input {
         Input::File { path, .. } => (path.clone(), vec![path.clone()]),
-        Input::Folder { path } => (path.clone(), sources::file::folder_files(path)?),
+        Input::Folder { path, pattern } => (
+            path.clone(),
+            sources::file::folder_matching(path, pattern.as_deref())?,
+        ),
         Input::Podman { .. } | Input::Journal(_) | Input::Docker { .. } | Input::Kubernetes(_) => {
             return Ok(report)
         }
@@ -399,45 +435,259 @@ fn remove_compressed(store: &mut Archive, file: &Path) -> Result<()> {
     Ok(())
 }
 
-// ---------- Caddy ----------
+// ---------- nuova sorgente ----------
 
-/// Modello dei file che Caddy crea ruotando `access.log`: `access-<data>.log`.
-pub fn caddy_rotation_pattern(log: &Path) -> Result<String> {
-    let stem = log
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .context("Nome del file di log non valido")?;
-    if log.extension().and_then(|s| s.to_str()) != Some("log") {
-        bail!("Scegli il file .log su cui scrive Caddy (es. access.log)");
-    }
-    Ok(format!("{}-*.log", glob::Pattern::escape(stem)))
+/// Una sorgente da aggiungere, come la descrivono pagina, terminale e procedura guidata.
+#[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
+pub struct NewSource {
+    #[serde(default)]
+    pub site: String,
+    #[serde(default)]
+    pub journal_runtime: Option<sources::podman::Runtime>,
+    /// `file`, `folder`, `podman`, `docker`, `kubernetes` o `journal`.
+    pub kind: String,
+    /// L'identificatore: nella procedura guidata si sceglie al salvataggio.
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub path: Option<PathBuf>,
+    /// Per le cartelle: i nomi dei file da leggere (vuoto = `*.log`).
+    #[serde(default)]
+    pub pattern: Option<String>,
+    #[serde(default)]
+    pub container: Option<String>,
+    #[serde(default)]
+    pub connection: Option<String>,
+    #[serde(default)]
+    pub days: Option<u32>,
+    #[serde(default)]
+    pub retention: Option<Retention>,
+    #[serde(default)]
+    pub log_kind: LogKind,
+    #[serde(default)]
+    pub archive_dir: Option<String>,
+    #[serde(default)]
+    pub journal: Option<sources::journal::Filter>,
+    #[serde(default)]
+    pub kubernetes: Option<sources::kubernetes::Target>,
+    /// Il programma riconosciuto (id della ricetta), solo come etichetta.
+    #[serde(default)]
+    pub program: Option<String>,
+    /// Il nome da mostrare (es. «example.com · Accessi»).
+    #[serde(default)]
+    pub label: Option<String>,
 }
 
-/// Sorgente per un log di Caddy: legge il file attivo e quelli ruotati,
-/// poi elimina i ruotati dopo averli archiviati e verificati.
-pub fn caddy_source(id: String, log: &Path, retention: Retention) -> Result<Source> {
-    let path = fs::canonicalize(log).context("Il file di log di Caddy non esiste")?;
+fn container_id(
+    runtime: sources::podman::Runtime,
+    wanted: &str,
+    connection: Option<&str>,
+) -> Result<String> {
+    Ok(sources::podman::discover_with(runtime, connection)?
+        .into_iter()
+        .find(|c| c.id == wanted || c.name == wanted)
+        .context("Container non trovato")?
+        .id)
+}
+
+/// Che cosa leggere, dalla richiesta.
+pub fn input_of(request: &NewSource) -> Result<Input> {
+    Ok(match request.kind.as_str() {
+        "folder" => {
+            let path = fs::canonicalize(request.path.as_ref().context("Scegli una cartella")?)?;
+            if !path.is_dir() {
+                bail!("Scegli una cartella");
+            }
+            let pattern = match request.pattern.as_deref().map(str::trim) {
+                None | Some("") => None,
+                Some(p) => Some(sources::file::checked_pattern(p)?),
+            };
+            Input::Folder { path, pattern }
+        }
+        // «caddy» arriva da pagine e script precedenti: è un file come gli altri.
+        "file" | "caddy" => {
+            let path = fs::canonicalize(request.path.as_ref().context("Scegli un file")?)?;
+            if !path.is_file() {
+                bail!("Scegli un file");
+            }
+            Input::File {
+                rotated_pattern: Some(rotation_pattern(&path)),
+                path,
+            }
+        }
+        "podman" => {
+            let wanted = request
+                .container
+                .as_deref()
+                .context("Scegli un container")?;
+            Input::Podman {
+                container: container_id(
+                    sources::podman::Runtime::Podman,
+                    wanted,
+                    request.connection.as_deref(),
+                )?,
+                connection: request.connection.clone(),
+            }
+        }
+        "docker" => {
+            let wanted = request
+                .container
+                .as_deref()
+                .context("Scegli un container")?;
+            Input::Docker {
+                container: container_id(
+                    sources::podman::Runtime::Docker,
+                    wanted,
+                    request.connection.as_deref(),
+                )?,
+                context: request.connection.clone(),
+            }
+        }
+        "kubernetes" => {
+            let target = request.kubernetes.clone().context("Scegli un pod")?;
+            target.validate()?;
+            Input::Kubernetes(target)
+        }
+        "journal" => Input::Journal(request.journal.clone().unwrap_or_default()),
+        other => bail!("Tipo di sorgente sconosciuto: {other}"),
+    })
+}
+
+/// Aggiunge una sorgente e restituisce il sito a cui appartiene.
+pub fn create(dir: &Path, request: NewSource) -> Result<String> {
+    let input = input_of(&request)?;
+    let archive_dir = match request
+        .archive_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(path) => {
+            let path = PathBuf::from(path);
+            if !path.is_absolute() {
+                bail!("La cartella SQLite deve essere assoluta");
+            }
+            util::private_dir(&path)?;
+            Some(fs::canonicalize(path)?)
+        }
+        None => None,
+    };
+    let retention = request
+        .retention
+        .unwrap_or_else(|| Retention::days(request.days.unwrap_or(28)));
+    retention.validate()?;
+    let source = Source {
+        id: request.name.clone(),
+        site: request.site.clone(),
+        journal_runtime: request.journal_runtime,
+        input,
+        retention,
+        log_kind: request.log_kind,
+        archive_dir,
+        program: request
+            .program
+            .clone()
+            .filter(|p| crate::recipes::get(p).is_some()),
+        label: request.label.clone().filter(|l| !l.trim().is_empty()),
+        ..Default::default()
+    };
+    let mut candidate = config::load(dir)?;
+    // Il sito può arrivare come nome: si controlla con il suo identificatore, come lo salverà `add`.
+    let mut checked = source.clone();
+    checked.site = config::assigned_site(&mut candidate, &source.site);
+    if checked.site.is_empty() && matches!(checked.input, Input::Journal(_)) {
+        checked.site = crate::model::SERVER_SITE.into();
+    }
+    candidate.sources.push(checked);
+    config::validate(&candidate)?;
+    if source.archive_path(dir).exists() {
+        bail!("Esiste già un archivio con questo identificatore; scegli un nome diverso");
+    }
+    // Una sorgente nuova non ha un archivio da spostare: la raccolta delle altre può continuare.
+    let _access = util::DataAccess::read(dir)?;
+    let parent = source
+        .archive_path(dir)
+        .parent()
+        .context("Cartella archivio mancante")?
+        .to_owned();
+    util::private_dir(&parent)?;
+    let probe = parent.join(format!(".loglem-probe-{}", crate::timestamps::now_ns()));
+    util::private_file(&probe)?.sync_all()?;
+    fs::remove_file(probe)?;
+    config::add(dir, source)
+}
+
+// ---------- nomi dei file ruotati ----------
+
+/// Il modello dei nomi dei file ruotati di un log, ricavato dai file che ci sono già accanto
+/// (`access.log.1`, `access.log-20261110.gz`, `access-2026-11-10T00-00-00.000.log`), per
+/// qualsiasi programma o logrotate. Se non ce ne sono ancora: `access.log.*`.
+pub fn rotation_pattern(log: &Path) -> String {
+    let name = log
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_owned();
+    let mut counts = std::collections::BTreeMap::<String, usize>::new();
+    for sibling in crate::copies::visible_rotations(log).unwrap_or_default() {
+        let other = sibling
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        if let Some(pattern) = crate::cleanup::pattern_for(&name, other) {
+            *counts.entry(pattern).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .max_by_key(|(_, n)| *n)
+        .map(|(p, _)| p)
+        .unwrap_or_else(|| format!("{}.*", glob::Pattern::escape(&name)))
+}
+
+/// Una sorgente per un singolo file, con i suoi file ruotati. La pulizia degli originali
+/// resta spenta: si accende nelle impostazioni della sorgente.
+pub fn file_source(id: String, log: &Path, retention: Retention) -> Result<Source> {
+    let path = fs::canonicalize(log).context("Il file di log non esiste")?;
     if !path.is_file() {
-        bail!("Scegli il file .log su cui scrive Caddy");
+        bail!("Scegli un file");
     }
     retention.validate()?;
     Ok(Source {
         id,
-        log_kind: LogKind::Access,
-        retention: Some(retention),
-        remove_rotated: true,
+        retention,
         input: Input::File {
-            rotated_pattern: Some(caddy_rotation_pattern(&path)?),
+            rotated_pattern: Some(rotation_pattern(&path)),
             path,
         },
         ..Source::default()
     })
 }
 
-/// Blocco da incollare nel Caddyfile perché la rotazione funzioni con Loglem.
-pub fn caddy_snippet(log: &Path) -> String {
-    format!(
-        "log {{\n\toutput file {} {{\n\t\troll_size 50MiB\n\t\troll_keep 100\n\t\troll_keep_for 60d\n\t}}\n}}",
-        log.display()
-    )
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rotated_logs_are_collected_without_enabling_cleanup() -> Result<()> {
+        // Nomi con la data, come li crea la rotazione interna di alcuni programmi.
+        let temp = tempfile::tempdir()?;
+        let active = temp.path().join("access.log");
+        let rotated = temp.path().join("access-2026-11-10.log");
+        fs::write(&active, "active\n")?;
+        fs::write(&rotated, "rotated\n")?;
+        let source = file_source("access".into(), &active, Retention::days(28))?;
+        assert!(!source.remove_rotated);
+        assert!(closed_originals(&source)?.is_empty());
+        let Input::File {
+            path,
+            rotated_pattern,
+        } = &source.input
+        else {
+            panic!("Expected file source")
+        };
+        assert!(sources::file::candidates(path, rotated_pattern.as_deref())?
+            .contains(&fs::canonicalize(rotated)?));
+        Ok(())
+    }
 }

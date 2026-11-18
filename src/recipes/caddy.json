@@ -1,0 +1,52 @@
+{
+  "id": "caddy",
+  "name": "Caddy",
+  "categories": [
+    "web"
+  ],
+  "recognize": {
+    "processes": [
+      "caddy"
+    ],
+    "configs": [
+      "/etc/caddy/Caddyfile",
+      "/usr/local/etc/Caddyfile"
+    ],
+    "images": [
+      "caddy"
+    ],
+    "units": [
+      "caddy.service"
+    ]
+  },
+  "logs": [
+    {
+      "path": "/var/log/caddy/access.log",
+      "kind": "access",
+      "format": "json"
+    }
+  ],
+  "config": {
+    "reader": "caddyfile",
+    "files": [
+      "/etc/caddy/Caddyfile",
+      "/usr/local/etc/Caddyfile"
+    ]
+  },
+  "journal": {
+    "units": [
+      "caddy.service"
+    ]
+  },
+  "rotation": "program",
+  "notes": {
+    "access": {
+      "it": "Nel blocco del sito aggiungi `log { output file /var/log/caddy/NOME.log }`, poi riavvia Caddy.",
+      "en": "In the site block add `log { output file /var/log/caddy/NAME.log }`, then restart Caddy."
+    },
+    "error": {
+      "it": "Gli errori di Caddy vanno nel journal del servizio: aggiungili come log del journal (servizio caddy.service).",
+      "en": "Caddy errors go to the service journal: add them as a journal log (caddy.service)."
+    }
+  }
+}

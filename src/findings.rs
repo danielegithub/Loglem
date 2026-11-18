@@ -137,7 +137,7 @@ fn has_user(lower: &str) -> bool {
     .iter()
     .any(|key| {
         if *key == "user " {
-            // Solo nelle forme dei log di sistema: «session opened for user …», «user deploy».
+            // Solo nelle forme dei log di sistema: «session opened for user …», «user admin».
             lower.contains("sudo:") && has_value_after(lower, key)
         } else {
             has_value_after(lower, key)
@@ -282,7 +282,7 @@ mod tests {
     #[test]
     fn emails() {
         assert_eq!(one("reset sent to anna.rossi@example.com").email, 1);
-        assert_eq!(one("ssh deploy@server1 failed").email, 0);
+        assert_eq!(one("ssh admin@server1 failed").email, 0);
         assert_eq!(one("price 10@ shop").email, 0);
     }
 
@@ -321,11 +321,11 @@ mod tests {
     #[test]
     fn admin_access() {
         assert_eq!(
-            one("Nov 17 sshd[812]: Accepted publickey for deploy from 203.0.113.2").admin_access,
+            one("Nov 17 sshd[812]: Accepted publickey for admin from 203.0.113.2").admin_access,
             1
         );
         assert_eq!(
-            one("{\"SYSLOG_IDENTIFIER\":\"sudo\",\"MESSAGE\":\"deploy : COMMAND=/bin/ls\"}")
+            one("{\"SYSLOG_IDENTIFIER\":\"sudo\",\"MESSAGE\":\"admin : COMMAND=/bin/ls\"}")
                 .admin_access,
             1
         );

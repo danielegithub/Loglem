@@ -86,7 +86,7 @@ fn days(period: Retention) -> u32 {
 
 /// Quali suggerimenti valgono, dati cosa c'è nel log e come è configurata la sorgente.
 fn rules(source: &Source, found: &Findings) -> Vec<Rule> {
-    let period = days(source.period());
+    let period = days(source.retention);
     let rule = |id, important, lines, satisfied, action| Rule {
         id,
         important,
@@ -195,7 +195,7 @@ pub fn report(dir: &Path, name: &str, language: &str) -> Result<Value> {
     let found = findings_of(dir, &source)?;
     let texts = catalog(language);
     let now = crate::timestamps::now_ns();
-    let period = source.period();
+    let period = source.retention;
     let items: Vec<Value> = found
         .as_ref()
         .map(|found| rules(&source, found))
@@ -482,10 +482,11 @@ mod tests {
     fn source(days: u32) -> Source {
         Source {
             id: "web".into(),
-            retention_days: days,
+            retention: crate::model::Retention::days(days),
             enabled: true,
             input: Input::Folder {
                 path: "/tmp".into(),
+                pattern: None,
             },
             ..Source::default()
         }
@@ -533,12 +534,12 @@ mod tests {
     #[test]
     fn server_logins_want_six_months() {
         let found =
-            findings::scan_lines(["sshd[1]: Accepted publickey for deploy from 203.0.113.2"]);
+            findings::scan_lines(["sshd[1]: Accepted publickey for admin from 203.0.113.2"]);
         let short = rules(&source(28), &found);
         assert_eq!(short[0].id, "admin_access");
         assert!(!short[0].satisfied);
         let mut long = source(28);
-        long.retention = Some(SIX_MONTHS);
+        long.retention = SIX_MONTHS;
         assert!(rules(&long, &found)[0].satisfied);
         // Una durata lunga qui è voluta: niente «retention_long».
         assert!(!ids(&rules(&source(730), &found)).contains(&"retention_long"));

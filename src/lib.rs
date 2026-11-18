@@ -2,24 +2,35 @@ pub mod access;
 pub mod advice;
 pub mod alerts;
 pub mod archive;
+pub mod arguments;
 pub mod audit;
 pub mod backup;
+mod blocks;
+pub mod cleanup;
 pub mod cli;
 pub mod collector;
 pub mod config;
+pub mod copies;
 pub mod diagnostics;
 pub mod discover;
+pub mod email;
 pub mod erase;
 pub mod findings;
+pub mod formats;
 pub mod health;
+mod http;
 pub mod inventory;
+pub mod logrotate;
 pub mod management;
+pub mod memory;
 pub mod model;
+pub mod monitor;
 pub mod originals;
 pub mod privacy;
 pub mod process;
 pub mod proof;
 pub mod query;
+pub mod recipes;
 pub mod remote_backup;
 pub mod rules;
 pub mod runtime;
@@ -32,10 +43,7 @@ pub mod timestamps;
 pub mod update;
 pub mod util;
 pub mod web;
-
-#[cfg(feature = "allocator-mimalloc")]
-#[global_allocator]
-static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+pub mod wizard;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_LINE_BYTES: usize = 1024 * 1024;

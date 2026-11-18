@@ -1,0 +1,63 @@
+{
+  "id": "mysql",
+  "name": "MySQL / MariaDB",
+  "categories": [
+    "database"
+  ],
+  "recognize": {
+    "processes": [
+      "mysqld",
+      "mariadbd"
+    ],
+    "configs": [
+      "/etc/mysql/my.cnf",
+      "/etc/my.cnf"
+    ],
+    "images": [
+      "mysql",
+      "mariadb"
+    ],
+    "units": [
+      "mysql.service",
+      "mariadb.service",
+      "mysqld.service"
+    ]
+  },
+  "logs": [
+    {
+      "path": "/var/log/mysql/error.log",
+      "kind": "database"
+    },
+    {
+      "path": "/var/log/mysqld.log",
+      "kind": "database"
+    },
+    {
+      "path": "/var/log/mariadb/mariadb.log",
+      "kind": "database"
+    }
+  ],
+  "config": {
+    "reader": "directives",
+    "files": [
+      "/etc/mysql/my.cnf",
+      "/etc/my.cnf",
+      "/etc/mysql/mysql.conf.d/mysqld.cnf",
+      "/etc/mysql/mariadb.conf.d/50-server.cnf"
+    ],
+    "logs": {
+      "log_error": "database",
+      "log-error": "database",
+      "general_log_file": "database",
+      "slow_query_log_file": "database"
+    }
+  },
+  "journal": {
+    "units": [
+      "mysql.service",
+      "mariadb.service",
+      "mysqld.service"
+    ]
+  },
+  "rotation": "logrotate"
+}

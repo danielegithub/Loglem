@@ -43,6 +43,40 @@ pub struct Container {
     pub name: String,
     pub pod: String,
     pub state: String,
+    /// Immagine (es. `docker.io/library/nginx:1.27`): serve a riconoscere il programma.
+    pub image: String,
+    /// Progetto compose (`com.docker.compose.project` o `io.podman.compose.project`).
+    pub project: String,
+}
+
+/// Un container di Podman o di Docker, con il runtime che lo mostra.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Listed {
+    pub runtime: Runtime,
+    pub id: String,
+    pub name: String,
+    pub image: String,
+    pub project: String,
+    pub state: String,
+}
+
+/// Tutti i container visibili, di Podman e di Docker insieme. Un runtime che manca o non
+/// risponde viene saltato.
+pub fn list_all() -> Vec<Listed> {
+    let mut all = Vec::new();
+    for runtime in [Runtime::Podman, Runtime::Docker] {
+        if let Ok(list) = discover_with(runtime, None) {
+            all.extend(list.into_iter().map(|c| Listed {
+                runtime,
+                id: c.id,
+                name: c.name,
+                image: c.image,
+                project: c.project,
+                state: c.state,
+            }));
+        }
+    }
+    all
 }
 
 pub fn command(connection: Option<&str>) -> Command {
@@ -100,11 +134,26 @@ fn container_from_json(row: &serde_json::Value, runtime: Runtime) -> Result<Cont
             runtime.name()
         );
     }
+    // Podman: «Labels» è un oggetto; Docker: un testo «chiave=valore,chiave=valore».
+    let label = |key: &str| -> Option<String> {
+        match row.get("Labels")? {
+            serde_json::Value::Object(map) => map.get(key)?.as_str().map(str::to_owned),
+            serde_json::Value::String(text) => text
+                .split(',')
+                .find_map(|kv| kv.strip_prefix(key)?.strip_prefix('='))
+                .map(str::to_owned),
+            _ => None,
+        }
+    };
     Ok(Container {
         id,
         name: field(&["Names", "Name", "names"]),
         pod: field(&["PodName", "Pod", "pod"]),
         state: field(&["State", "Status", "state"]),
+        image: field(&["Image", "image"]),
+        project: label("com.docker.compose.project")
+            .or_else(|| label("io.podman.compose.project"))
+            .unwrap_or_default(),
     })
 }
 
@@ -413,6 +462,11 @@ fn missing_container(
 
 pub fn migrate_legacy(store: &Archive, container: &str) -> Result<()> {
     if store.get_state("podman_scoped_keys")?.is_none() {
+        crate::blocks::unpack(
+            &store.db,
+            "id IN (SELECT block_id FROM block_keys WHERE key LIKE 'podman:%')",
+            &[],
+        )?;
         store.db.execute(
             "UPDATE entries SET record_key = ?1 || ':' || record_key \
              WHERE record_key LIKE 'podman:%'",

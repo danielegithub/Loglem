@@ -59,21 +59,51 @@ pub fn candidates(path: &Path, pattern: Option<&str>) -> Result<Vec<PathBuf>> {
 
 pub fn log_name(path: &Path) -> bool {
     let name = path.file_name().and_then(|v| v.to_str()).unwrap_or("");
-    name.ends_with(".log")
+    let plain = name.strip_suffix(".gz").unwrap_or(name);
+    plain.ends_with(".log")
+        || plain.ends_with("_log")
+        || plain.ends_with(".out")
+        || plain.ends_with(".err")
         || name.contains(".log.")
+        || name.contains(".log-")
+        || name.contains("_log.")
         || ["syslog", "messages", "cron", "secure", "maillog"]
             .iter()
             .any(|base| name == *base || name.starts_with(&format!("{base}.")))
 }
 
-/// Immediate children only; no symlinks, devices, or implicit recursive access.
-pub fn folder_files(path: &Path) -> Result<Vec<PathBuf>> {
+/// Il modello dei nomi di una cartella quando non è indicato.
+pub const DEFAULT_FOLDER_PATTERN: &str = "*.log";
+
+/// Modelli che si propongono per una cartella, in base a cosa contiene.
+const FOLDER_PATTERNS: &[&str] = &["*.log", "*_log", "*.out", "*.err", "*.txt", "*"];
+
+/// Controlla un modello dei nomi: niente `/`, sintassi valida, non vuoto.
+pub fn checked_pattern(pattern: &str) -> Result<String> {
+    let pattern = pattern.trim();
+    if pattern.is_empty() || pattern.contains('/') || pattern.len() > 120 {
+        bail!("Il modello dei nomi non può essere vuoto né contenere «/»");
+    }
+    glob::Pattern::new(pattern).context("Modello dei nomi non valido")?;
+    Ok(pattern.to_owned())
+}
+
+fn matching(path: &Path, pattern: Option<&str>, compressed: bool) -> Result<Vec<PathBuf>> {
+    let glob = glob::Pattern::new(pattern.unwrap_or(DEFAULT_FOLDER_PATTERN))?;
     let mut files = Vec::new();
     for entry in fs::read_dir(path)? {
         let entry = entry?;
-        if entry.file_type()?.is_file()
-            && entry.path().extension().and_then(|x| x.to_str()) == Some("log")
-        {
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let plain = name.strip_suffix(".gz");
+        let take = match (compressed, plain) {
+            (true, Some(plain)) => glob.matches(plain),
+            (false, None) => glob.matches(&name),
+            _ => false,
+        };
+        if take {
             files.push(entry.path());
         }
     }
@@ -81,18 +111,48 @@ pub fn folder_files(path: &Path) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-/// File `.log.gz` di una cartella: lo storico già ruotato e compresso.
+/// Immediate children only; no symlinks, devices, or implicit recursive access.
+pub fn folder_files(path: &Path) -> Result<Vec<PathBuf>> {
+    matching(path, None, false)
+}
+
+/// I file di una cartella con questo modello dei nomi (vuoto = `*.log`), senza i compressi.
+pub fn folder_matching(path: &Path, pattern: Option<&str>) -> Result<Vec<PathBuf>> {
+    matching(path, pattern, false)
+}
+
+/// File `.gz` di una cartella: lo storico già ruotato e compresso.
 pub fn compressed_in_folder(path: &Path) -> Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        if entry.file_type()?.is_file() && entry.file_name().to_string_lossy().ends_with(".log.gz")
-        {
-            files.push(entry.path());
-        }
-    }
-    files.sort();
+    matching(path, None, true)
+}
+
+pub fn archive_inputs_in_folder(path: &Path, pattern: Option<&str>) -> Result<Vec<PathBuf>> {
+    let mut files = matching(path, pattern, false)?;
+    files.extend(matching(path, pattern, true)?);
     Ok(files)
+}
+
+/// I modelli dei nomi che coprono i file della cartella, dal più utile: (modello, quanti file).
+pub fn suggest_patterns(path: &Path) -> Vec<(String, usize)> {
+    let names: Vec<String> = fs::read_dir(path)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| !n.ends_with(".gz") && !n.starts_with('.'))
+        .collect();
+    let mut found: Vec<(String, usize)> = FOLDER_PATTERNS
+        .iter()
+        .filter_map(|p| {
+            let glob = glob::Pattern::new(p).ok()?;
+            let n = names.iter().filter(|name| glob.matches(name)).count();
+            (n > 0).then(|| (p.to_string(), n))
+        })
+        .collect();
+    // Il più preciso prima, a parità di file; «*» sempre per ultimo.
+    found.sort_by_key(|(p, n)| (p == "*", std::cmp::Reverse(*n)));
+    found
 }
 
 /// Legge un file di log, compresso o no.

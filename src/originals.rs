@@ -60,11 +60,10 @@ fn files_of(source: &Source) -> Result<Option<(Vec<PathBuf>, Option<PathBuf>)>> 
             file::candidates(path, rotated_pattern.as_deref())?,
             Some(path.clone()),
         ),
-        Input::Folder { path } => {
-            let mut files = file::folder_files(path)?;
-            files.extend(file::compressed_in_folder(path)?);
-            (files, None)
-        }
+        Input::Folder { path, pattern } => (
+            file::archive_inputs_in_folder(path, pattern.as_deref())?,
+            None,
+        ),
         _ => return Ok(None),
     };
     if let Some(completed) = &source.completed_dir {

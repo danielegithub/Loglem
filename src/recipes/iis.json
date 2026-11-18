@@ -1,0 +1,25 @@
+{
+  "id": "iis",
+  "name": "IIS",
+  "categories": [
+    "web"
+  ],
+  "recognize": {
+    "processes": [
+      "w3wp"
+    ]
+  },
+  "logs": [
+    {
+      "path": "C:/inetpub/logs/LogFiles/*/*.log",
+      "kind": "access"
+    }
+  ],
+  "rotation": "program",
+  "notes": {
+    "access": {
+      "it": "In Gestione IIS apri il sito, poi «Registrazione»: attiva il log in formato W3C.",
+      "en": "In IIS Manager open the site, then «Logging»: turn on the W3C log."
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "id": "postgresql",
+  "name": "PostgreSQL",
+  "categories": [
+    "database"
+  ],
+  "recognize": {
+    "processes": [
+      "postgres",
+      "postmaster"
+    ],
+    "configs": [
+      "/etc/postgresql"
+    ],
+    "images": [
+      "postgres"
+    ],
+    "units": [
+      "postgresql.service"
+    ]
+  },
+  "logs": [
+    {
+      "path": "/var/log/postgresql/*.log",
+      "kind": "database"
+    },
+    {
+      "path": "/var/lib/pgsql/data/log/*.log",
+      "kind": "database"
+    }
+  ],
+  "journal": {
+    "units": [
+      "postgresql.service"
+    ],
+    "identifiers": [
+      "postgres"
+    ]
+  },
+  "rotation": "logrotate"
+}

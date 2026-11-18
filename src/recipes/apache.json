@@ -1,0 +1,87 @@
+{
+  "id": "apache",
+  "name": "Apache",
+  "categories": [
+    "web"
+  ],
+  "recognize": {
+    "processes": [
+      "apache2",
+      "httpd"
+    ],
+    "configs": [
+      "/etc/apache2/apache2.conf",
+      "/etc/httpd/conf/httpd.conf",
+      "/usr/local/etc/httpd/httpd.conf"
+    ],
+    "images": [
+      "httpd"
+    ],
+    "units": [
+      "apache2.service",
+      "httpd.service"
+    ]
+  },
+  "logs": [
+    {
+      "path": "/var/log/apache2/access.log",
+      "kind": "access",
+      "format": "combined"
+    },
+    {
+      "path": "/var/log/apache2/error.log",
+      "kind": "error"
+    },
+    {
+      "path": "/var/log/apache2/other_vhosts_access.log",
+      "kind": "access",
+      "format": "combined"
+    },
+    {
+      "path": "/var/log/httpd/access_log",
+      "kind": "access",
+      "format": "combined"
+    },
+    {
+      "path": "/var/log/httpd/error_log",
+      "kind": "error"
+    }
+  ],
+  "config": {
+    "reader": "directives",
+    "files": [
+      "/etc/apache2/apache2.conf",
+      "/etc/httpd/conf/httpd.conf",
+      "/usr/local/etc/httpd/httpd.conf"
+    ],
+    "logs": {
+      "CustomLog": "access",
+      "TransferLog": "access",
+      "ErrorLog": "error"
+    },
+    "hosts": [
+      "ServerName",
+      "ServerAlias"
+    ],
+    "blocks": [
+      "<VirtualHost"
+    ]
+  },
+  "journal": {
+    "units": [
+      "apache2.service",
+      "httpd.service"
+    ]
+  },
+  "rotation": "logrotate",
+  "notes": {
+    "access": {
+      "it": "Nel `VirtualHost` del sito aggiungi `CustomLog /var/log/apache2/NOME-access.log combined`, poi ricarica Apache.",
+      "en": "In the site's `VirtualHost` add `CustomLog /var/log/apache2/NAME-access.log combined`, then reload Apache."
+    },
+    "error": {
+      "it": "Nel `VirtualHost` del sito aggiungi `ErrorLog /var/log/apache2/NOME-error.log`, poi ricarica Apache.",
+      "en": "In the site's `VirtualHost` add `ErrorLog /var/log/apache2/NAME-error.log`, then reload Apache."
+    }
+  }
+}

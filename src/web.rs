@@ -1,7 +1,6 @@
 //! Small local HTTP interface. Bind port 0: the OS reserves a free port atomically.
 use crate::{access, audit, collector, config, query::Query, sources, timestamps, util};
 use anyhow::{bail, Context, Result};
-use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -24,6 +23,25 @@ struct App {
     sessions: access::Sessions,
     /// Usato quando non ci sono utenti: la pagina lo riceve e lo rimanda in ogni richiesta.
     local_token: String,
+    /// Da quando gira questo Loglem (per «acceso da N giorni»).
+    started_at: String,
+    /// Processi, container e servizi visti di recente: i passi 2 e 3 di «Aggiungi» li
+    /// riusano per un minuto invece di cercarli di nuovo.
+    machine: std::sync::Mutex<Option<(std::time::Instant, crate::recipes::Machine)>>,
+}
+
+impl App {
+    fn machine(&self, fresh: bool) -> crate::recipes::Machine {
+        let mut cached = self.machine.lock().unwrap_or_else(|p| p.into_inner());
+        match cached.as_ref() {
+            Some((at, m)) if !fresh && at.elapsed() < Duration::from_secs(60) => m.clone(),
+            _ => {
+                let m = crate::recipes::Machine::scan();
+                *cached = Some((std::time::Instant::now(), m.clone()));
+                m
+            }
+        }
+    }
 }
 
 impl App {
@@ -34,6 +52,8 @@ impl App {
             dir,
             sessions: access::Sessions::default(),
             local_token: util::digest(&random),
+            started_at: crate::timestamps::format_ns(crate::timestamps::now_ns()),
+            machine: std::sync::Mutex::new(None),
         })
     }
 }
@@ -82,7 +102,20 @@ pub fn serve(dir: &Path) -> Result<()> {
         let stream = match listener.accept() {
             Ok((stream, _)) => stream,
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(50));
+                #[cfg(unix)]
+                {
+                    use std::os::fd::AsRawFd;
+                    let mut fd = libc::pollfd {
+                        fd: listener.as_raw_fd(),
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    unsafe {
+                        libc::poll(&mut fd, 1, 100);
+                    }
+                }
+                #[cfg(not(unix))]
+                std::thread::sleep(Duration::from_millis(5));
                 continue;
             }
             Err(error) => return Err(error.into()),
@@ -103,6 +136,7 @@ pub fn serve(dir: &Path) -> Result<()> {
             if let Err(error) = handle(stream, &app, &address) {
                 crate::diagnostics::error("http", "handle_request", None, &error);
             }
+            crate::memory::trim();
             active.fetch_sub(1, Ordering::SeqCst);
         });
     }
@@ -331,6 +365,18 @@ fn serve_static(stream: TcpStream, route: &str, csrf: Option<&str>) -> Result<()
             "text/html; charset=utf-8",
             include_bytes!("../web/login.html").as_slice().into(),
         ),
+        ("/copies.js", _) => (
+            "application/javascript; charset=utf-8",
+            include_bytes!("../web/copies.js").as_slice().into(),
+        ),
+        ("/add.js", _) => (
+            "application/javascript; charset=utf-8",
+            include_bytes!("../web/add.js").as_slice().into(),
+        ),
+        ("/monitor.js", _) => (
+            "application/javascript; charset=utf-8",
+            include_bytes!("../web/monitor.js").as_slice().into(),
+        ),
         ("/rules.js", _) => (
             "application/javascript; charset=utf-8",
             include_bytes!("../web/rules.js").as_slice().into(),
@@ -478,6 +524,20 @@ fn audited(route: &str, body: &Value) -> Option<(&'static str, String)> {
         "/api/backup-create" | "/api/backup-transfer" => Some(("backup", route.to_owned())),
         "/api/config-import" => Some(("importa impostazioni", String::new())),
         "/api/update-install" => Some(("aggiornamento", String::new())),
+        "/api/site-add" => Some(("nuovo sito", String::new())),
+        "/api/wizard-save" => Some((
+            "nuove sorgenti",
+            format!(
+                "tipo: {}",
+                body.get("category").and_then(Value::as_str).unwrap_or("?")
+            ),
+        )),
+        "/api/monitor-save" => Some(("modifica controllo automatico", String::new())),
+        "/api/email-save" => Some(("modifica avvisi per mail", String::new())),
+        "/api/email-off" => Some(("spegne avvisi per mail", String::new())),
+        "/api/email-test" => Some(("mail di prova", String::new())),
+        "/api/service-install" => Some(("installa servizio", String::new())),
+        "/api/service-restart" => Some(("riavvia servizio", String::new())),
         "/api/add" => Some((
             "nuova sorgente",
             format!(
@@ -492,7 +552,7 @@ fn audited(route: &str, body: &Value) -> Option<(&'static str, String)> {
                 body.get("name").and_then(Value::as_str).unwrap_or("?")
             ),
         )),
-        "/api/source-settings" | "/api/retention" => Some((
+        "/api/source-settings" | "/api/retention" | "/api/duplicate-pause" => Some((
             "modifica impostazioni",
             format!(
                 "sorgente: {}",
@@ -506,7 +566,9 @@ fn audited(route: &str, body: &Value) -> Option<(&'static str, String)> {
 /// Azioni concesse anche a chi può solo consultare.
 const READER_ROUTES: &[&str] = &[
     "/api/status",
+    "/api/site-copies",
     "/api/original-retention",
+    "/api/cleanup",
     "/api/search",
     "/api/tail",
     "/api/stats",
@@ -669,6 +731,31 @@ fn handle(stream: TcpStream, app: &App, address: &str) -> Result<()> {
     if let Some((action, detail)) = audited(route, &body) {
         audit::record(&app.dir, &who, action, &detail);
     }
+    if route == "/api/stats" {
+        let days = body
+            .get("days")
+            .and_then(Value::as_u64)
+            .unwrap_or(7)
+            .clamp(1, 3650) as u32;
+        let result = text(&body, "source").and_then(|id| crate::stats::compute(&app.dir, id, days));
+        return match result {
+            Ok(stats) => respond(
+                stream,
+                200,
+                "application/json",
+                &serde_json::to_vec(&stats)?,
+            ),
+            Err(e) => {
+                crate::diagnostics::error("web", route, None, &e);
+                json_error(
+                    stream,
+                    400,
+                    &format!("{e:#}"),
+                    json!({"diagnostics":"diagnostics/loglem.log"}),
+                )
+            }
+        };
+    }
     let result = match route {
         "/api/me" => Ok(json!({
             "login": login,
@@ -718,29 +805,25 @@ fn text<'a>(body: &'a Value, key: &str) -> Result<&'a str> {
         .with_context(|| format!("Missing {key}"))
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NewSource {
-    journal_runtime: Option<sources::podman::Runtime>,
-    kind: String,
-    name: String,
-    path: Option<PathBuf>,
-    container: Option<String>,
-    connection: Option<String>,
-    days: Option<u32>,
-    retention: Option<crate::model::Retention>,
-    #[serde(default)]
-    log_kind: crate::model::LogKind,
-    archive_dir: Option<String>,
-    #[serde(default)]
-    journal: Option<sources::journal::Filter>,
-    #[serde(default)]
-    kubernetes: Option<sources::kubernetes::Target>,
+/// Controllo automatico, mail e da quando gira Loglem: piccolo, va in ogni risposta di stato.
+fn live(app: &App) -> Result<Value> {
+    let email = crate::email::status(&app.dir)?;
+    Ok(json!({
+        "monitor": crate::monitor::status(&app.dir)?,
+        "email": {
+            "configured": email.configured,
+            "active": email.active,
+            "pending": email.pending,
+            "last": email.last,
+        },
+        "started_at": app.started_at,
+    }))
 }
 
 fn api(route: &str, app: &App, body: Value) -> Result<Value> {
     let dir = &app.dir;
     match route {
+        "/api/site-add" => Ok(json!({"site":config::add_site(dir, text(&body, "name")?)?})),
         "/api/rules" => {
             let cfg = config::load(dir)?;
             Ok(
@@ -785,26 +868,136 @@ fn api(route: &str, app: &App, body: Value) -> Result<Value> {
             Ok(json!({"message":"Trasferimento richiesto. Consulta l’esito del backup."}))
         }
         "/api/status" => {
-            let sources = collector::statuses(dir)?;
+            let progress = app.worker.progress();
+            if body.get("generation").and_then(Value::as_u64) == Some(progress.generation) {
+                return Ok(json!({"unchanged":true,"collection":progress,"live":live(app)?}));
+            }
+            let collector::SiteStatus {
+                sites,
+                sources,
+                originals,
+            } = collector::statuses_with_sites(dir)?;
             let mut problems =
                 crate::health::problems(&sources, crate::health::DEFAULT_MAX_MINUTES);
-            problems.extend(crate::alerts::evaluate(dir)?);
-            let problems = crate::alerts::hide_acknowledged(dir, problems);
+            problems.extend(crate::alerts::cached_rules(dir)?);
+            let problems = crate::alerts::visible(dir, problems);
             Ok(json!({
                 "sources": sources,
+                "sites": sites,
+                "originals": originals,
                 "archive_directory": dir,
                 "version": crate::VERSION,
                 "collection": app.worker.progress(),
                 "problems": problems,
+                "live": live(app)?,
             }))
+        }
+        "/api/monitor-save" => {
+            let minutes = body
+                .get("minutes")
+                .and_then(Value::as_u64)
+                .and_then(|m| u32::try_from(m).ok());
+            crate::monitor::configure(dir, body.get("enabled").and_then(Value::as_bool), minutes)?;
+            Ok(
+                json!({"monitor": crate::monitor::status(dir)?, "message": "Controllo automatico salvato."}),
+            )
+        }
+        "/api/monitor-check" => {
+            let status = crate::monitor::run(dir)?;
+            Ok(json!({"monitor": status, "message": "Controllo fatto."}))
+        }
+        "/api/email-status" => Ok(json!(crate::email::status(dir)?)),
+        "/api/email-save" => {
+            let list = match body.get("to") {
+                Some(Value::Array(items)) => items
+                    .iter()
+                    .filter_map(|v| v.as_str().map(str::to_owned))
+                    .collect(),
+                Some(Value::String(text)) => text
+                    .split([',', ';', '\n'])
+                    .map(|s| s.trim().to_owned())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+                _ => vec![],
+            };
+            let settings = crate::email::Settings {
+                from: text(&body, "from")?.to_owned(),
+                to: list,
+                page_url: body
+                    .get("page_url")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                hourly_limit: body
+                    .get("hourly_limit")
+                    .and_then(Value::as_u64)
+                    .and_then(|n| u32::try_from(n).ok())
+                    .unwrap_or(6),
+            };
+            crate::email::configure(dir, settings, body.get("key").and_then(Value::as_str))?;
+            Ok(
+                json!({"email": crate::email::status(dir)?, "message": "Avvisi per mail salvati. Premi «Invia una mail di prova» per controllare."}),
+            )
+        }
+        "/api/email-test" => {
+            crate::email::send_test(dir)?;
+            Ok(
+                json!({"email": crate::email::status(dir)?, "message": "Mail di prova partita. Controlla la casella di posta."}),
+            )
+        }
+        "/api/email-off" => {
+            crate::email::disable(dir)?;
+            Ok(
+                json!({"email": crate::email::status(dir)?, "message": "Avvisi per mail spenti e chiave cancellata."}),
+            )
+        }
+        "/api/service" => Ok(json!(crate::service::details())),
+        "/api/service-install" => {
+            // Mai «start» da qui: se questa pagina è un `loglem web` avviato a mano,
+            // un secondo Loglem non potrebbe partire (una sola copia per cartella dati).
+            let report = crate::service::install(dir, false)?;
+            let details = crate::service::details();
+            let mut message = report.text();
+            if !details.active {
+                message.push_str("\n\nIl servizio non è ancora in esecuzione: partirà all'accensione del computer. Per avviarlo adesso chiudi questo Loglem (se lo hai lanciato a mano) e usa: loglem service start");
+            }
+            Ok(json!({"service": details, "message": message}))
+        }
+        "/api/service-restart" => {
+            let details = crate::service::details();
+            anyhow::ensure!(
+                details.installed,
+                "Il servizio non è installato: premi «Installa il servizio»."
+            );
+            anyhow::ensure!(
+                details.this_process || details.active,
+                "Questa pagina è servita da un Loglem avviato a mano. Chiudilo e avvia il servizio con: loglem service start"
+            );
+            // Prima si risponde, poi si riavvia: se è questo stesso processo, la chiamata non torna.
+            std::thread::spawn(|| {
+                std::thread::sleep(Duration::from_millis(800));
+                if let Err(error) = crate::service::restart() {
+                    crate::diagnostics::error("service", "restart", None, &error);
+                }
+            });
+            Ok(json!({"message": "Riavvio in corso: la pagina si ricarica da sola."}))
+        }
+        "/api/site-copies" | "/api/site-duplicates" => Ok(json!(crate::copies::report(
+            dir,
+            text(&body, "site")?,
+            route == "/api/site-duplicates"
+        )?)),
+        "/api/cleanup" => {
+            let source = config::source(dir, text(&body, "name")?)?;
+            let flag = |key: &str| body.get(key).and_then(Value::as_bool);
+            Ok(json!(crate::cleanup::report(
+                &source,
+                flag("rotated"),
+                flag("handoff")
+            )))
         }
         "/api/original-retention" => {
             let source = config::source(dir, text(&body, "name")?)?;
-            Ok(json!(sources::retention::originals(
-                &source.input,
-                source.remove_rotated,
-                source.completed_dir.is_some()
-            )))
+            Ok(json!(sources::retention::cached(dir, &source)?))
         }
         // Solo l'amministratore può interrogare una sorgente ancora da aggiungere.
         "/api/preview-retention" => {
@@ -838,7 +1031,25 @@ fn api(route: &str, app: &App, body: Value) -> Result<Value> {
             }
             folders.sort();
             let logs = sources::file::folder_files(&path)?;
-            Ok(json!({"path":path,"parent":path.parent(),"folders":folders,"logs":logs}))
+            // Tutti i file: un log può avere qualsiasi nome (catalina.out, error_log…).
+            let mut files: Vec<PathBuf> = fs::read_dir(&path)?
+                .flatten()
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+                .map(|e| e.path())
+                .filter(|p| {
+                    !p.file_name()
+                        .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+                })
+                .take(2000)
+                .collect();
+            files.sort();
+            let files: Vec<_> = files
+                .iter()
+                .map(|p| json!({"path": p, "log": sources::file::log_name(p)}))
+                .collect();
+            Ok(
+                json!({"path":path,"parent":path.parent(),"folders":folders,"logs":logs,"files":files}),
+            )
         }
         "/api/podman" => {
             let connection = body
@@ -874,103 +1085,81 @@ fn api(route: &str, app: &App, body: Value) -> Result<Value> {
                 .filter(|s| !s.is_empty());
             Ok(json!({ "pods": sources::kubernetes::discover(context)? }))
         }
-        "/api/add" => {
-            let request: NewSource = serde_json::from_value(body)?;
-            if request.kind == "caddy" {
-                return add_caddy(app, request);
-            }
-            if request.kind == "journal" {
-                return add_journal(app, request);
-            }
-            let input = match request.kind.as_str() {
-                "folder" => {
-                    let path = fs::canonicalize(request.path.context("Scegli una cartella")?)?;
-                    if !path.is_dir() {
-                        bail!("Scegli una cartella");
-                    }
-                    crate::model::Input::Folder { path }
-                }
-                "podman" => {
-                    let id = request.container.context("Scegli un container")?;
-                    let found = sources::podman::discover(request.connection.as_deref())?
-                        .into_iter()
-                        .find(|c| c.id == id || c.name == id)
-                        .context("Container non trovato")?;
-                    crate::model::Input::Podman {
-                        container: found.id,
-                        connection: request.connection,
-                    }
-                }
-                "docker" => {
-                    let id = request.container.context("Scegli un container")?;
-                    let runtime = sources::podman::Runtime::Docker;
-                    let found =
-                        sources::podman::discover_with(runtime, request.connection.as_deref())?
-                            .into_iter()
-                            .find(|c| c.id == id || c.name == id)
-                            .context("Container non trovato")?;
-                    crate::model::Input::Docker {
-                        container: found.id,
-                        context: request.connection,
-                    }
-                }
-                "file" => {
-                    // Un log di Nginx o Apache: anche i file ruotati da logrotate
-                    // (access.log.1, access.log.2.gz…).
-                    let path = fs::canonicalize(request.path.context("Scegli un file")?)?;
-                    let name = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .context("Nome non valido")?;
-                    crate::model::Input::File {
-                        rotated_pattern: Some(format!("{}.*", glob::Pattern::escape(name))),
-                        path,
-                    }
-                }
-                "kubernetes" => {
-                    let target = request.kubernetes.context("Scegli un pod")?;
-                    target.validate()?;
-                    crate::model::Input::Kubernetes(target)
-                }
-                _ => bail!("Tipo sorgente sconosciuto"),
-            };
-            let archive_dir = match request.archive_dir.filter(|s| !s.trim().is_empty()) {
-                Some(path) => {
-                    let path = PathBuf::from(path);
-                    if !path.is_absolute() {
-                        bail!("La cartella SQLite deve essere assoluta");
-                    }
-                    crate::util::private_dir(&path)?;
-                    Some(fs::canonicalize(path)?)
-                }
-                None => None,
-            };
-            let source = crate::model::Source {
-                id: request.name,
-                input,
-                retention: request.retention,
-                retention_days: request.days.unwrap_or(28),
-                log_kind: request.log_kind,
-                archive_dir,
-                ..Default::default()
-            };
-            let mut candidate = crate::config::load(dir)?;
-            candidate.sources.push(source.clone());
-            crate::config::validate(&candidate)?;
-            if source.archive_path(dir).exists() {
-                bail!("Esiste già un archivio con questo identificatore; scegli un nome diverso");
-            }
-            // A new source has no existing archive to relocate. Concurrent
-            // collection of other sources must not prevent adding it.
-            let _access = crate::util::DataAccess::read(dir)?;
-            let parent = source.archive_path(dir).parent().unwrap().to_owned();
-            crate::util::private_dir(&parent)?;
-            let probe = parent.join(format!(".loglem-probe-{}", timestamps::now_ns()));
-            crate::util::private_file(&probe)?.sync_all()?;
-            fs::remove_file(probe)?;
-            crate::config::add(dir, source)?;
+        "/api/wizard-categories" => Ok(json!({
+            "categories": crate::wizard::CATEGORIES,
+            "other_help": crate::wizard::OTHER_HELP,
+        })),
+        "/api/wizard-programs" => {
+            let machine = app.machine(true);
+            Ok(json!(crate::wizard::programs(
+                text(&body, "category")?,
+                body.get("name").and_then(Value::as_str).unwrap_or(""),
+                &machine
+            )?))
+        }
+        "/api/wizard-proposals" => {
+            let programs: Vec<String> = body
+                .get("programs")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            let machine = app.machine(false);
+            Ok(json!(crate::wizard::proposals(
+                text(&body, "category")?,
+                body.get("name").and_then(Value::as_str).unwrap_or(""),
+                &programs,
+                &machine
+            )?))
+        }
+        "/api/wizard-manual" => {
+            let source: crate::management::NewSource =
+                serde_json::from_value(body.get("source").cloned().context("Manca il log")?)?;
+            crate::management::input_of(&source)?;
+            let kind = body
+                .get("kind")
+                .and_then(|k| serde_json::from_value(k.clone()).ok())
+                .unwrap_or_default();
+            let title = text(&body, "title")?.to_owned();
+            Ok(json!(crate::wizard::manual(source, title, kind)))
+        }
+        "/api/wizard-save" => {
+            let request: crate::wizard::SaveRequest = serde_json::from_value(body)?;
+            let saved = crate::wizard::save(dir, request)?;
             app.worker.request();
-            Ok(json!({"message":"Sorgente salvata. Lettura automatica avviata.","collecting":true}))
+            Ok(json!({
+                "site": saved.site,
+                "sources": saved.sources,
+                "message": "Log collegati. La lettura parte subito.",
+            }))
+        }
+        "/api/folder-patterns" => {
+            let path = fs::canonicalize(text(&body, "path")?).context("Cartella non trovata")?;
+            let patterns: Vec<_> = sources::file::suggest_patterns(&path)
+                .into_iter()
+                .map(|(pattern, files)| json!({"pattern": pattern, "files": files}))
+                .collect();
+            Ok(json!({ "patterns": patterns }))
+        }
+        "/api/containers" => {
+            let pods = sources::kubernetes::discover(None).unwrap_or_default();
+            Ok(json!({ "containers": sources::podman::list_all(), "pods": pods }))
+        }
+        "/api/add" => {
+            let request: crate::management::NewSource = serde_json::from_value(body)?;
+            let site = crate::management::create(dir, request)?;
+            app.worker.request();
+            Ok(
+                json!({"site":site,"message":"Sorgente salvata. Lettura automatica avviata.","collecting":true}),
+            )
+        }
+        "/api/duplicate-pause" => {
+            crate::copies::pause(
+                dir,
+                text(&body, "site")?,
+                text(&body, "name")?,
+                text(&body, "keep")?,
+            )?;
+            app.worker.request();
+            Ok(json!({"message": "Raccolta in pausa"}))
         }
         "/api/source-settings" => {
             let change: crate::management::Change = serde_json::from_value(body)?;
@@ -1063,7 +1252,7 @@ fn api(route: &str, app: &App, body: Value) -> Result<Value> {
             Ok(serde_json::to_value(exported)?)
         }
         "/api/config-import" => {
-            let mut imported: crate::model::Config = serde_json::from_value(
+            let mut imported = config::decode(
                 body.get("config")
                     .cloned()
                     .context("Manca la configurazione")?,
@@ -1079,27 +1268,11 @@ fn api(route: &str, app: &App, body: Value) -> Result<Value> {
             app.worker.request();
             Ok(json!({"message": "Impostazioni importate."}))
         }
-        "/api/stats" => {
-            let days = body
-                .get("days")
-                .and_then(Value::as_u64)
-                .unwrap_or(7)
-                .clamp(1, 3650) as u32;
-            Ok(serde_json::to_value(crate::stats::compute(
-                dir,
-                text(&body, "source")?,
-                days,
-            )?)?)
-        }
         "/api/alert-seen" => {
             crate::alerts::acknowledge(dir, text(&body, "id")?)?;
             Ok(json!({}))
         }
         "/api/journal-units" => Ok(json!({ "units": sources::journal::units()? })),
-        "/api/caddy-snippet" => {
-            let path = PathBuf::from(text(&body, "path")?);
-            Ok(json!({ "snippet": crate::management::caddy_snippet(&path) }))
-        }
         "/api/collect" => {
             app.worker.request();
             Ok(
@@ -1165,40 +1338,4 @@ fn tail(app: &App, body: &Value) -> Result<Value> {
         }
         std::thread::sleep(Duration::from_millis(500));
     }
-}
-
-/// Aggiunge il journal di systemd, con i filtri scelti nella pagina.
-fn add_journal(app: &App, request: NewSource) -> Result<Value> {
-    let source = crate::model::Source {
-        id: request.name,
-        journal_runtime: request.journal_runtime,
-        input: crate::model::Input::Journal(request.journal.unwrap_or_default()),
-        retention: request.retention,
-        retention_days: request.days.unwrap_or(28),
-        log_kind: request.log_kind,
-        ..Default::default()
-    };
-    let _access = util::DataAccess::read(&app.dir)?;
-    config::add(&app.dir, source)?;
-    app.worker.request();
-    Ok(json!({"message": "Journal collegato. Lettura automatica avviata.", "collecting": true}))
-}
-
-/// Aggiunge il log di accesso di Caddy con la pulizia dei file ruotati.
-fn add_caddy(app: &App, request: NewSource) -> Result<Value> {
-    let path = request.path.context("Scegli il file .log di Caddy")?;
-    let retention = request.retention.unwrap_or(crate::model::Retention {
-        amount: request.days.unwrap_or(28),
-        unit: crate::model::RetentionUnit::Days,
-    });
-    let source = crate::management::caddy_source(request.name, &path, retention)?;
-    let snippet = crate::management::caddy_snippet(&path);
-    let _access = util::DataAccess::read(&app.dir)?;
-    config::add(&app.dir, source)?;
-    app.worker.request();
-    Ok(json!({
-        "message": "Sorgente Caddy salvata. Lettura automatica avviata.",
-        "collecting": true,
-        "snippet": snippet,
-    }))
 }

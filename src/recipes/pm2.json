@@ -1,0 +1,29 @@
+{
+  "id": "pm2",
+  "name": "Node con PM2",
+  "categories": [
+    "app"
+  ],
+  "recognize": {
+    "processes": [
+      "PM2"
+    ]
+  },
+  "logs": [
+    {
+      "path": "~/.pm2/logs/*-out.log",
+      "kind": "application"
+    },
+    {
+      "path": "~/.pm2/logs/*-error.log",
+      "kind": "error"
+    }
+  ],
+  "rotation": "program",
+  "notes": {
+    "rotation": {
+      "it": "PM2 non ruota i file da solo: installa `pm2-logrotate` (`pm2 install pm2-logrotate`) oppure usa logrotate.",
+      "en": "PM2 does not rotate files by itself: install `pm2-logrotate` (`pm2 install pm2-logrotate`) or use logrotate."
+    }
+  }
+}

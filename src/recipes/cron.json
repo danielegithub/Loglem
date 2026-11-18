@@ -1,0 +1,40 @@
+{
+  "id": "cron",
+  "name": "Attività pianificate (cron)",
+  "categories": [
+    "scheduled"
+  ],
+  "recognize": {
+    "processes": [
+      "cron",
+      "crond"
+    ],
+    "configs": [
+      "/etc/crontab"
+    ],
+    "units": [
+      "cron.service",
+      "crond.service"
+    ]
+  },
+  "logs": [
+    {
+      "path": "/var/log/cron",
+      "kind": "system",
+      "format": "syslog"
+    },
+    {
+      "path": "/var/log/cron.log",
+      "kind": "system",
+      "format": "syslog"
+    }
+  ],
+  "journal": {
+    "identifiers": [
+      "CRON",
+      "cron",
+      "crond"
+    ]
+  },
+  "rotation": "logrotate"
+}

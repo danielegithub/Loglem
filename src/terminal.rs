@@ -1,7 +1,7 @@
 use crate::{
     cli::{self, Action, ConfigAction, ServiceAction, UpdateAction},
     collector, config,
-    model::{Input, Retention, RetentionUnit, Source, SourceStatus},
+    model::{Input, Retention, RetentionUnit, SourceStatus},
     sources, timestamps, util,
 };
 use anyhow::{bail, Result};
@@ -307,6 +307,8 @@ fn custom_period(current: Retention) -> Result<Option<Retention>> {
 struct FolderContents {
     folders: Vec<PathBuf>,
     logs: Vec<PathBuf>,
+    /// Tutti i file: un log può avere qualsiasi nome.
+    files: Vec<PathBuf>,
 }
 
 fn folder_contents(path: &Path) -> Result<FolderContents> {
@@ -318,9 +320,24 @@ fn folder_contents(path: &Path) -> Result<FolderContents> {
         }
     }
     folders.sort();
+    let mut files: Vec<PathBuf> = std::fs::read_dir(path)?
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .map(|e| e.path())
+        .filter(|p| {
+            !p.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+        })
+        .collect();
+    files.sort();
     Ok(FolderContents {
         folders,
-        logs: sources::file::folder_files(path)?,
+        logs: files
+            .iter()
+            .filter(|p| sources::file::log_name(p))
+            .cloned()
+            .collect(),
+        files,
     })
 }
 
@@ -349,13 +366,14 @@ fn browse(folder_only: bool) -> Result<Option<PathBuf>> {
             }
         };
         let help = format!(
-            "Cartella: {}\n{} file .log trovati. Apri una sottocartella o scrivi un percorso.\n{}",
+            "Cartella: {}\n{} file che sembrano log, {} file in tutto. Apri una sottocartella o scrivi un percorso.\n{}",
             path.display(),
             contents.logs.len(),
+            contents.files.len(),
             if folder_only {
-                "Scegli questa cartella per seguire anche i nuovi .log. Sottocartelle escluse."
+                "Scegli questa cartella: dopo scegli i nomi dei file da leggere. Sottocartelle escluse."
             } else {
-                "Seleziona il file .log da leggere."
+                "Seleziona il file da leggere: va bene qualsiasi file di testo."
             }
         );
         let mut choices = vec![
@@ -373,14 +391,23 @@ fn browse(folder_only: bool) -> Result<Option<PathBuf>> {
                 p.file_name().unwrap_or_default().to_string_lossy()
             )
         }));
-        choices.extend(contents.logs.iter().map(|p| {
+        let shown = if folder_only {
+            &contents.logs
+        } else {
+            &contents.files
+        };
+        choices.extend(shown.iter().map(|p| {
             format!(
-                "[.log] {}",
+                "[{}] {}",
+                if sources::file::log_name(p) {
+                    "log"
+                } else {
+                    "file"
+                },
                 p.file_name().unwrap_or_default().to_string_lossy()
             )
         }));
-        let Some(index) = guided_menu("Aggiungi sorgente · 1/4 · Posizione", &help, &choices)?
-        else {
+        let Some(index) = guided_menu("Scegli dove", &help, &choices)? else {
             return Ok(None);
         };
         match index {
@@ -397,14 +424,13 @@ fn browse(folder_only: bool) -> Result<Option<PathBuf>> {
                     "",
                     |value| {
                         let expanded = expand_path(value);
-                        if expanded.is_dir()
-                            || (!folder_only
-                                && expanded.is_file()
-                                && expanded.extension().and_then(|v| v.to_str()) == Some("log"))
-                        {
+                        if expanded.is_dir() || (!folder_only && expanded.is_file()) {
                             Ok(())
                         } else {
-                            Err("Percorso non trovato. Indica una cartella leggibile o un file .log.".into())
+                            Err(
+                                "Percorso non trovato. Indica una cartella leggibile o un file."
+                                    .into(),
+                            )
                         }
                     },
                 )?
@@ -420,10 +446,10 @@ fn browse(folder_only: bool) -> Result<Option<PathBuf>> {
             2 => path = path.parent().unwrap_or(Path::new("/")).to_owned(),
             n if n < 3 + contents.folders.len() => path = contents.folders[n - 3].clone(),
             n => {
-                let file = &contents.logs[n - 3 - contents.folders.len()];
+                let file = &shown[n - 3 - contents.folders.len()];
                 if folder_only {
                     let text = format!(
-                        "{}\n\nPer aggiungere tutti i .log torna all'elenco e scegli\n\
+                        "{}\n\nPer aggiungere i file della cartella torna all'elenco e scegli\n\
                          «Usa questa cartella».",
                         file.display()
                     );
@@ -452,34 +478,6 @@ fn expand_path(value: &str) -> PathBuf {
     PathBuf::from(value)
 }
 
-fn suggested_id(path: &Path, dir: &Path) -> Result<String> {
-    let stem = path.file_stem().unwrap_or_default().to_string_lossy();
-    let base = stem
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .take(48)
-        .collect::<String>();
-    let base = if base.trim_matches('-').is_empty() {
-        "log".to_owned()
-    } else {
-        base
-    };
-    let config = config::load(dir)?;
-    let mut candidate = base.clone();
-    let mut n = 2;
-    while config.sources.iter().any(|s| s.id == candidate) {
-        candidate = format!("{base}-{n}");
-        n += 1;
-    }
-    Ok(candidate)
-}
-
 fn human_bytes(bytes: u64) -> String {
     if bytes < 1024 {
         return format!("{bytes} B");
@@ -494,7 +492,7 @@ pub fn status_text(rows: &[SourceStatus]) -> String {
     if rows.is_empty() {
         return concat!(
             "Non hai ancora aggiunto sorgenti.\n",
-            "Dal menu principale scegli «Aggiungi cartella, file o container»."
+            "Dal menu principale scegli «I miei siti → Nuovo sito»."
         )
         .into();
     }
@@ -530,8 +528,8 @@ fn source_summary(s: &SourceStatus) -> String {
 }
 
 const MAIN_MENU: [&str; 9] = [
-    "Le mie sorgenti — posizione, spazio e log salvati",
-    "Aggiungi cartella, file o container",
+    "I miei siti",
+    "Aggiungi un log",
     "Cerca nei log",
     "Conservazione — per quanti giorni tenere i log",
     "Leggi i log adesso",
@@ -547,12 +545,23 @@ fn main_menu_help(has_sources: bool, dir: &Path) -> String {
          Per vedere i log nuovi scegli «Leggi i log adesso»; per trovarli, «Cerca nei log»."
     } else {
         "Benvenuto! Per iniziare bastano tre passi:\n  \
-         1. «Aggiungi cartella, file o container»: indica dove si trovano i log.\n  \
+         1. «I miei siti → Nuovo sito»: crea un sito e collegagli un log.\n  \
          2. «Leggi i log adesso»: Loglem ne salva una copia ricercabile.\n  \
          3. «Cerca nei log»: trova parole e date.\n\
          I file originali restano dove sono, salvo che tu attivi la loro pulizia."
     };
     let mut help = format!("{text}\nDati salvati in: {}", dir.display());
+    // Se nessun Loglem tiene il blocco del servizio, nessuno sta leggendo i log.
+    let reading = crate::util::Lock::acquire(&dir.join("service.lock")).is_err();
+    help.push_str(&format!(
+        "\nRaccolta: {}",
+        if reading {
+            "attiva"
+        } else {
+            "ferma · scegli «Raccolta automatica» per avviarla e tenerla accesa"
+        }
+    ));
+    help.push_str(&format!("\n{}", crate::monitor::line(dir)));
     if let Ok(problems) = crate::health::check(dir, crate::health::DEFAULT_MAX_MINUTES, true) {
         for problem in problems.iter().take(3) {
             help.push_str(&format!("\n⚠ {}", problem.text));
@@ -573,19 +582,15 @@ pub fn run(dir: &Path) -> Result<()> {
     }
     loop {
         let has_sources = !config::load(dir)?.sources.is_empty();
-        // Senza sorgenti il cursore parte già su «Aggiungi».
-        let start = if has_sources { 0 } else { 1 };
         let selected = guided_menu_from(
             "Menu principale",
             &main_menu_help(has_sources, dir),
             &MAIN_MENU.map(String::from),
-            start,
+            0,
         )?;
         let result = match selected {
-            Some(0) => {
-                collector::statuses(dir).and_then(|s| page("Le mie sorgenti", &status_text(&s)))
-            }
-            Some(1) => add_source(dir),
+            Some(0) => site_menu(dir),
+            Some(1) => add_source(dir, None),
             Some(2) => search(dir),
             Some(3) => source_settings(dir),
             Some(4) => collector::once(dir).and_then(|_| {
@@ -622,7 +627,7 @@ fn journal_filter() -> Result<Option<(Input, String, String)>> {
     let Some(units) = field(
         "Journal · servizi",
         "Quali servizi systemd vuoi leggere? Separali con una virgola.\n\
-         Esempio: caddy.service, podman.service\n\
+         Esempio: myapp.service, nginx.service\n\
          Lascia vuoto per leggere tutto il journal.",
         "",
         |_| Ok(()),
@@ -655,238 +660,545 @@ fn journal_filter() -> Result<Option<(Input, String, String)>> {
     Ok(Some((Input::Journal(filter), description, suggestion)))
 }
 
-fn add_source(dir: &Path) -> Result<()> {
-    let Some(kind) = guided_menu(
-        "Aggiungi sorgente",
-        "Da dove vuoi leggere i log?\nScegli una cartella per aggiungere tutti i suoi file .log.",
+fn site_menu(dir: &Path) -> Result<()> {
+    let collector::SiteStatus {
+        sites,
+        sources: rows,
+        ..
+    } = collector::statuses_with_sites(dir)?;
+    let mut choices: Vec<_> = sites
+        .values()
+        .map(|site| (site.id.as_str(), site.name.as_str()))
+        .collect();
+    choices.sort_by_key(|(id, name)| (*id == crate::model::SERVER_SITE, *name));
+    if rows.iter().any(|s| s.site.is_empty()) {
+        choices.push(("", "Senza sito"));
+    }
+    let mut labels = vec!["Nuovo sito".to_owned()];
+    labels.extend(choices.iter().map(|(id, name)| {
+        format!(
+            "{name} · {} log",
+            rows.iter().filter(|s| s.site == *id).count()
+        )
+    }));
+    let Some(index) = menu("I miei siti", &labels)? else {
+        return Ok(());
+    };
+    let (id, name) = if index == 0 {
+        let Some(name) = field("Nome del sito o progetto", "", "", |value| {
+            if value.is_empty() {
+                Err("Indica un nome.".into())
+            } else {
+                Ok(())
+            }
+        })?
+        else {
+            return Ok(());
+        };
+        (config::add_site(dir, &name)?, name)
+    } else {
+        let (id, name) = choices[index - 1];
+        (id.to_owned(), name.to_owned())
+    };
+    let logs: Vec<_> = rows.into_iter().filter(|s| s.site == id).collect();
+    let mut labels = vec![
+        "Aggiungi un log".into(),
+        "Vedi copie e doppioni del sito".into(),
+        "Cerca doppioni anche fuori da Loglem".into(),
+    ];
+    labels.extend(logs.iter().map(|s| s.label.clone()));
+    let summary = if logs.is_empty() {
+        "Nessun log collegato."
+    } else {
+        "Scegli un log per vedere origine, archivio e stato."
+    };
+    match guided_menu(&name, summary, &labels)? {
+        Some(0) => add_source(dir, Some(&id))?,
+        Some(choice @ (1 | 2)) => {
+            let report =
+                crate::copies::report(dir, if id.is_empty() { "~" } else { &id }, choice == 2)?;
+            page("Copie e doppioni", &report.description())?;
+        }
+        Some(index) => page(&logs[index - 3].label, &source_summary(&logs[index - 3]))?,
+        None => {}
+    }
+    Ok(())
+}
+
+/// Il tipo di log, scelto da un elenco.
+fn pick_kind(current: crate::model::LogKind) -> Result<crate::model::LogKind> {
+    use crate::model::LogKind;
+    let kinds = [
+        LogKind::Access,
+        LogKind::Error,
+        LogKind::Application,
+        LogKind::Database,
+        LogKind::AdminAccess,
+        LogKind::System,
+        LogKind::Other,
+    ];
+    let labels: Vec<String> = kinds
+        .iter()
+        .map(|k| {
+            format!(
+                "{}{}",
+                crate::wizard::kind_label(*k),
+                if *k == current { " (attuale)" } else { "" }
+            )
+        })
+        .collect();
+    Ok(menu("Che tipo di log è?", &labels)?
+        .map(|i| kinds[i])
+        .unwrap_or(current))
+}
+
+/// «Manca qualcosa? Aggiungi da…»: un log scelto a mano, per dove sta.
+fn pick_location(kind: crate::model::LogKind) -> Result<Option<crate::wizard::Proposal>> {
+    use crate::management::NewSource;
+    let Some(choice) = guided_menu(
+        "Aggiungi da…",
+        "Dove sta il log? Conta dove sta, non quale programma lo scrive.",
         &[
-            "Una cartella di file .log".into(),
-            "Un singolo file .log".into(),
-            "Un container Podman".into(),
-            "Il log di accesso di Caddy (gestisce anche i file ruotati)".into(),
-            "Il journal di Linux (servizi, accessi SSH, sudo)".into(),
+            "Una cartella (tutti i file con un certo nome, anche quelli futuri)".into(),
+            "Un file".into(),
+            "Un container (Podman, Docker) o un pod di Kubernetes".into(),
+            "Il journal di sistema (servizi, programmi, gravità)".into(),
+            "Altro: un log che non sta in un file".into(),
         ],
+    )?
+    else {
+        return Ok(None);
+    };
+    let manual =
+        |source: NewSource, title: String| Some(crate::wizard::manual(source, title, kind));
+    match choice {
+        0 => {
+            let Some(path) = browse(true)? else {
+                return Ok(None);
+            };
+            let mut patterns: Vec<String> = sources::file::suggest_patterns(&path)
+                .into_iter()
+                .map(|(p, n)| format!("{p} · {n} file"))
+                .collect();
+            if patterns.is_empty() {
+                patterns.push(format!(
+                    "{} · nessun file per ora",
+                    sources::file::DEFAULT_FOLDER_PATTERN
+                ));
+            }
+            patterns.push("Scrivo io il modello…".into());
+            let Some(i) = guided_menu(
+                "Quali file della cartella?",
+                "Scegli i nomi dei file da leggere: * sta per «qualsiasi testo».\nVengono letti anche i file futuri con lo stesso nome. Le sottocartelle no.",
+                &patterns,
+            )?
+            else {
+                return Ok(None);
+            };
+            let pattern = if i == patterns.len() - 1 {
+                prompt("Modello dei nomi (es. *.log, *_log, app-*.txt)", "*.log")?
+            } else {
+                patterns[i]
+                    .split(" · ")
+                    .next()
+                    .unwrap_or("*.log")
+                    .to_owned()
+            };
+            let pattern = sources::file::checked_pattern(&pattern)?;
+            let title = format!("{} ({pattern})", path.display());
+            Ok(manual(
+                NewSource {
+                    kind: "folder".into(),
+                    path: Some(path),
+                    pattern: Some(pattern),
+                    ..Default::default()
+                },
+                title,
+            ))
+        }
+        1 => {
+            let Some(path) = browse(false)? else {
+                return Ok(None);
+            };
+            let title = path.display().to_string();
+            Ok(manual(
+                NewSource {
+                    kind: "file".into(),
+                    path: Some(path),
+                    ..Default::default()
+                },
+                title,
+            ))
+        }
+        2 => {
+            let containers = sources::podman::list_all();
+            let pods = sources::kubernetes::discover(None).unwrap_or_default();
+            if containers.is_empty() && pods.is_empty() {
+                page(
+                    "Container",
+                    "Non vedo container né pod: Podman, Docker e kubectl non rispondono a questo utente.",
+                )?;
+                return Ok(None);
+            }
+            let mut labels: Vec<String> = containers
+                .iter()
+                .map(|c| {
+                    format!(
+                        "{} · {} · {} · {}",
+                        c.name,
+                        c.runtime.name(),
+                        crate::recipes::image_name(&c.image),
+                        c.state
+                    )
+                })
+                .collect();
+            labels.extend(pods.iter().map(|p| match &p.app {
+                Some(app) => format!("pod {} · Kubernetes · app={app} · {}", p.name, p.namespace),
+                None => format!("pod {} · Kubernetes · {}", p.name, p.namespace),
+            }));
+            let Some(i) = menu("Quale container?", &labels)? else {
+                return Ok(None);
+            };
+            if let Some(c) = containers.get(i) {
+                return Ok(manual(
+                    NewSource {
+                        kind: match c.runtime {
+                            sources::podman::Runtime::Podman => "podman",
+                            sources::podman::Runtime::Docker => "docker",
+                        }
+                        .into(),
+                        container: Some(c.id.clone()),
+                        ..Default::default()
+                    },
+                    format!("container «{}» · {}", c.name, c.runtime.name()),
+                ));
+            }
+            let pod = &pods[i - containers.len()];
+            // Con l'etichetta «app» si seguono anche i pod ricreati dai rilasci.
+            let target = sources::kubernetes::Target {
+                namespace: pod.namespace.clone(),
+                pod: pod.app.is_none().then(|| pod.name.clone()),
+                selector: pod.app.as_ref().map(|a| format!("app={a}")),
+                ..Default::default()
+            };
+            Ok(manual(
+                NewSource {
+                    kind: "kubernetes".into(),
+                    kubernetes: Some(target),
+                    ..Default::default()
+                },
+                labels[i].clone(),
+            ))
+        }
+        3 => {
+            let Some((Input::Journal(filter), description, _)) = journal_filter()? else {
+                return Ok(None);
+            };
+            Ok(manual(
+                NewSource {
+                    kind: "journal".into(),
+                    journal: Some(filter),
+                    ..Default::default()
+                },
+                description,
+            ))
+        }
+        _ => {
+            page("Un log che non sta in un file", crate::wizard::OTHER_HELP)?;
+            Ok(None)
+        }
+    }
+}
+
+/// `loglem add`: il percorso guidato fuori dal menu.
+pub fn add(dir: &Path) -> Result<()> {
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        bail!("«loglem add» richiede un terminale interattivo. Negli script usa «loglem source add-file» e gli altri «source add-…».");
+    }
+    let result = add_source(dir, None);
+    let _ = crossterm::terminal::disable_raw_mode();
+    result
+}
+
+/// Una riga scritta dall'utente, fuori dai menu (per le conferme dei comandi).
+pub fn ask_line(question: &str) -> Result<String> {
+    use std::io::Write;
+    print!("{question}");
+    io::stdout().flush()?;
+    let mut line = String::new();
+    io::stdin().read_line(&mut line)?;
+    Ok(line)
+}
+
+/// Il percorso guidato «Aggiungi», in quattro passi come nella pagina web.
+/// `site` = aggiungere a un sito già esistente (il nome non si chiede).
+fn add_source(dir: &Path, site: Option<&str>) -> Result<()> {
+    use crate::wizard;
+    let labels: Vec<String> = wizard::CATEGORIES
+        .iter()
+        .map(|c| format!("{} — {}", c.title, c.description))
+        .collect();
+    let Some(index) = guided_menu(
+        "Aggiungi · 1/4 · Cosa vuoi aggiungere?",
+        "Scegli che cosa vuoi tenere d'occhio: poi ti guido passo per passo.",
+        &labels,
     )?
     else {
         return Ok(());
     };
-    let caddy = kind == 3;
-    let (input, description, suggestion) = if kind == 4 {
-        let Some(found) = journal_filter()? else {
-            return Ok(());
-        };
-        found
-    } else if kind != 2 {
-        let Some(path) = browse(kind == 0)? else {
-            return Ok(());
-        };
-        let suggestion = suggested_id(&path, dir)?;
-        let description = if kind == 0 {
-            let files = sources::file::folder_files(&path)?;
-            format!(
-                concat!(
-                    "Cartella: {}\n",
-                    "{} file .log presenti; anche i nuovi .log saranno letti.\n",
-                    "Le sottocartelle non vengono incluse."
-                ),
-                path.display(),
-                files.len()
-            )
-        } else if caddy {
-            format!(
-                "Log di Caddy: {}\n\
-                 Anche i file ruotati da Caddy vengono letti e archiviati;\n\
-                 Loglem li elimina 24 ore dopo, solo se la copia è verificata.",
-                path.display()
-            )
-        } else {
-            format!("File: {}", path.display())
-        };
-        (
-            if kind == 0 {
-                Input::Folder { path }
-            } else if caddy {
-                Input::File {
-                    rotated_pattern: Some(crate::management::caddy_rotation_pattern(&path)?),
-                    path,
-                }
-            } else {
-                Input::File {
-                    path,
-                    rotated_pattern: None,
+    let category = &wizard::CATEGORIES[index];
+    let site_name = match site {
+        Some(id) => config::load(dir)?
+            .sites
+            .get(id)
+            .map(|s| s.name.clone())
+            .unwrap_or_default(),
+        None => String::new(),
+    };
+    let name = if !site_name.is_empty() {
+        site_name
+    } else if category.names_site {
+        let Some(name) = field(
+            "Aggiungi · Nome",
+            &format!(
+                "Come si chiama? ({})\nDiventa un sito: ci trovi tutti i suoi log.",
+                category.name_hint
+            ),
+            "",
+            |value| {
+                if value.trim().is_empty() {
+                    Err("Indica un nome.".into())
+                } else {
+                    Ok(())
                 }
             },
-            description,
-            suggestion,
-        )
-    } else {
-        let Some(connection) = field(
-            "Podman · connessione",
-            "Lascia vuoto per usare la connessione Podman predefinita.",
-            "",
-            |_| Ok(()),
         )?
         else {
             return Ok(());
         };
-        let connection = if connection.is_empty() {
-            None
-        } else {
-            Some(connection)
-        };
-        let containers = sources::podman::discover(connection.as_deref())?;
-        if containers.is_empty() {
-            return page(
-                "Podman",
-                "Non ci sono container disponibili in questa connessione.",
-            );
-        }
-        let labels = containers
-            .iter()
-            .map(|c| {
-                format!(
-                    "{} · pod: {} · {}",
-                    c.name,
-                    if c.pod.is_empty() { "nessuno" } else { &c.pod },
-                    c.state
-                )
-            })
-            .collect::<Vec<_>>();
-        let Some(index) = menu("Scegli il container", &labels)? else {
+        name
+    } else {
+        String::new()
+    };
+
+    let mut chosen: Vec<wizard::Proposal> = Vec::new();
+    let mut selected: Vec<bool> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    if category.id == "other" {
+        let Some(p) = pick_location(category.kind)? else {
             return Ok(());
         };
-        (
-            Input::Podman {
-                container: containers[index].id.clone(),
-                connection,
-            },
-            format!("Container: {}", containers[index].name),
-            suggested_id(Path::new(&containers[index].name), dir)?,
-        )
-    };
-    let Some(name) = field(
-        "Aggiungi sorgente · 2/4 · Nome",
-        concat!(
-            "Come vuoi chiamarla nell'elenco?\n",
-            "Puoi mantenere il nome proposto. Usa lettere, numeri, - oppure _."
-        ),
-        &suggestion,
-        |value| {
-            config::validate_id(value)
-                .map_err(|_| "Usa da 1 a 64 lettere, numeri, - oppure _.".to_owned())?;
-            match config::load(dir) {
-                Ok(c) if c.sources.iter().any(|s| s.id == value) => {
-                    Err("Nome già utilizzato. Scegli un altro nome.".into())
+        chosen.push(p);
+        selected.push(true);
+    } else {
+        draw(
+            "Aggiungi",
+            &["Cerco sul server i programmi e i log…".into()],
+            "",
+        )?;
+        let machine = crate::recipes::Machine::scan();
+        // Passo 2: chi lo fa funzionare.
+        let mut programs: Vec<String> = Vec::new();
+        if category.asks_program {
+            let list = wizard::programs(category.id, &name, &machine)?;
+            if let (Some(id), Some(question)) = (&list.suggested, &list.question) {
+                if choose(question, &["Sì, è lui", "No, scelgo io"])? == Some(0) {
+                    programs.push(id.clone());
                 }
-                Ok(_) => Ok(()),
-                Err(e) => Err(e.to_string()),
             }
-        },
-    )?
-    else {
-        return Ok(());
-    };
-    let Some(days) = pick_period(
-        "Aggiungi sorgente · 3/4 · Durata",
-        Retention {
-            amount: 28,
-            unit: RetentionUnit::Days,
-        },
-    )?
-    else {
-        return Ok(());
-    };
-    let help = format!(
-        concat!(
-            "{description}\n",
-            "Nome: {name}\n",
-            "Copie conservate per: {days}\n",
-            "Archivio: {}\n",
-            "{originals}"
-        ),
-        config::archive_path(dir, &name).display(),
-        originals = if caddy {
-            "I file ruotati verranno eliminati dopo la verifica; il file attivo mai."
-        } else {
-            "I file originali non verranno cancellati."
-        },
-        description = description,
-        name = name,
-        days = days
-    );
-    let Some(choice) = guided_menu(
-        "Aggiungi sorgente · 4/4 · Riepilogo",
-        &help,
-        &[
-            "Salva e leggi i log adesso".into(),
-            "Salva per leggere in seguito".into(),
-            "Annulla".into(),
-        ],
-    )?
-    else {
-        return Ok(());
-    };
-    if choice == 2 {
-        return Ok(());
+            while programs.is_empty() || programs.len() < 3 {
+                let available: Vec<&wizard::Program> = list
+                    .programs
+                    .iter()
+                    .filter(|p| !programs.contains(&p.id))
+                    .collect();
+                let mut labels: Vec<String> = available
+                    .iter()
+                    .map(|p| match p.found.first() {
+                        Some(why) => format!("{} · trovato ({why})", p.name),
+                        None => p.name.clone(),
+                    })
+                    .collect();
+                labels.push("Un altro programma".into());
+                labels.push("Non lo so".into());
+                let title = if programs.is_empty() {
+                    "Aggiungi · 2/4 · Chi risponde alle richieste?"
+                } else {
+                    "Aggiungi · 2/4 · Chi c'è davanti (o dietro)?"
+                };
+                let Some(i) = guided_menu(
+                    title,
+                    "In cima quelli trovati su questo server.\n«Un altro programma» e «Non lo so» vanno bene: i log li scegli al passo dopo.",
+                    &labels,
+                )?
+                else {
+                    return Ok(());
+                };
+                if i >= available.len() {
+                    break;
+                }
+                programs.push(available[i].id.clone());
+                if choose(
+                    "Davanti c'è anche un proxy, o dietro un'applicazione?",
+                    &["No, continua", "Sì, scegli anche quello"],
+                )? != Some(1)
+                {
+                    break;
+                }
+            }
+        }
+        // Passo 3: dove sono i log.
+        let found = wizard::proposals(category.id, &name, &programs, &machine)?;
+        warnings = found.warnings;
+        selected = found.proposals.iter().map(|p| p.exact).collect();
+        chosen = found.proposals;
     }
-    config::add(
+    loop {
+        let mut labels: Vec<String> = chosen
+            .iter()
+            .zip(&selected)
+            .map(|(p, on)| {
+                let mark = if !p.readable {
+                    "[!]"
+                } else if *on {
+                    "[x]"
+                } else {
+                    "[ ]"
+                };
+                let size = p
+                    .bytes
+                    .map(human_bytes)
+                    .map(|s| format!(" · {s}"))
+                    .unwrap_or_default();
+                format!("{mark} {} · {}{size}", p.title, p.reason)
+            })
+            .collect();
+        labels.push("Manca qualcosa? Aggiungi da…".into());
+        let count = selected.iter().filter(|s| **s).count();
+        labels.push(format!("Continua con i log scelti ({count})"));
+        let mut help = String::from("Invio su un log lo sceglie o lo toglie. [!] = non si legge: aprilo per sapere cosa fare.");
+        for w in &warnings {
+            help.push_str(&format!("\n⚠ {w}"));
+        }
+        let Some(i) = guided_menu("Aggiungi · 3/4 · Dove sono i log?", &help, &labels)? else {
+            return Ok(());
+        };
+        if i < chosen.len() {
+            let p = &chosen[i];
+            if !p.readable {
+                page(&p.title, p.problem.as_deref().unwrap_or("Non si legge."))?;
+            } else {
+                selected[i] = !selected[i];
+                if selected[i] && !p.preview.is_empty() {
+                    page(
+                        &format!("Ultime righe di {}", p.title),
+                        &p.preview.join("\n"),
+                    )?;
+                }
+            }
+        } else if i == chosen.len() {
+            if let Some(p) = pick_location(category.kind)? {
+                chosen.push(p);
+                selected.push(true);
+            }
+        } else if count == 0 {
+            page(
+                "Nessun log scelto",
+                "Scegli almeno un log, oppure aggiungilo con «Manca qualcosa?».",
+            )?;
+        } else {
+            break;
+        }
+    }
+    // Passo 4: riepilogo.
+    let mut items: Vec<wizard::Proposal> = chosen
+        .into_iter()
+        .zip(selected)
+        .filter(|(_, on)| *on)
+        .map(|(p, _)| p)
+        .collect();
+    loop {
+        let mut text = String::new();
+        if !name.is_empty() {
+            text.push_str(&format!("Sito: {name}\n"));
+        } else {
+            text.push_str("Va in: Questo server\n");
+        }
+        for p in &items {
+            text.push_str(&format!(
+                "\n• {} · {}{}\n  Durata: 28 giorni (predefinita, la cambi nelle impostazioni)",
+                wizard::kind_label(p.kind),
+                p.title,
+                p.program_name
+                    .as_deref()
+                    .map(|n| format!(" · {n}"))
+                    .unwrap_or_default()
+            ));
+        }
+        let Some(choice) = guided_menu(
+            "Aggiungi · 4/4 · Riepilogo",
+            &text,
+            &[
+                "Salva e inizia a leggere".into(),
+                "Cambia il tipo di un log".into(),
+                "Annulla".into(),
+            ],
+        )?
+        else {
+            return Ok(());
+        };
+        match choice {
+            0 => break,
+            1 => {
+                let labels: Vec<String> = items.iter().map(|p| p.title.clone()).collect();
+                if let Some(i) = menu("Quale log?", &labels)? {
+                    items[i].kind = pick_kind(items[i].kind)?;
+                }
+            }
+            _ => return Ok(()),
+        }
+    }
+    let saved = wizard::save(
         dir,
-        Source {
-            id: name.clone(),
-            retention: Some(days),
-            retention_days: if days.unit == RetentionUnit::Days {
-                days.amount
-            } else {
-                28
-            },
-            enabled: true,
-            remove_rotated: caddy,
-            log_kind: if caddy {
-                crate::model::LogKind::Access
-            } else {
-                crate::model::LogKind::Generic
-            },
-            input: input.clone(),
-            ..Source::default()
+        wizard::SaveRequest {
+            category: category.id.into(),
+            name: name.clone(),
+            items: items
+                .into_iter()
+                .map(|p| wizard::SaveItem {
+                    kind: Some(p.kind),
+                    source: p.source,
+                })
+                .collect(),
+            retention: None,
+            site: site.map(str::to_owned),
         },
     )?;
-    let mut message = format!("Sorgente «{name}» aggiunta.\nConservazione: {days}.\n\n");
-    if let (true, Input::File { path, .. }) = (caddy, &input) {
-        message.push_str(&format!(
-            "Nel Caddyfile usa questo blocco log, poi riavvia Caddy:\n\n{}\n\n",
-            crate::management::caddy_snippet(path)
-        ));
-    }
-    if choice == 0 {
-        match collector::once(dir) {
-            Ok(()) => message.push_str(
-                "Prima lettura completata. Apri «Le mie sorgenti» per vedere i log archiviati.",
-            ),
-            Err(error) => message.push_str(&format!(
-                concat!(
-                    "La sorgente è salvata, ma la lettura non è stata completata.\n",
-                    "Il raccoglitore potrebbe essere già attivo.\n",
-                    "Dettaglio: {error:#}"
-                ),
-                error = error
-            )),
+    let mut message = format!(
+        "Fatto: {} log collegati{}.\n",
+        saved.sources.len(),
+        if name.is_empty() {
+            " a «Questo server»".to_owned()
+        } else {
+            format!(" al sito «{name}»")
         }
-    } else {
-        message.push_str("Quando vuoi, scegli «Leggi i log adesso» dal menu principale.");
+    );
+    match collector::once(dir) {
+        Ok(()) => message.push_str("Prima lettura completata: li trovi in «I miei siti»."),
+        Err(error) => message.push_str(&format!(
+            "La lettura partirà con la raccolta automatica.\nDettaglio: {error:#}"
+        )),
     }
-    message.push_str(concat!(
-        "\n",
-        "\n",
-        "Per la raccolta continua usa «Raccolta automatica» (Linux).\n",
-        "I menu da soli non avviano la raccolta continua."
-    ));
-    page("Sorgente salvata", &message)
+    page("Aggiungi", &message)
 }
 
 fn search(dir: &Path) -> Result<()> {
     let sources = config::load(dir)?.sources;
     if sources.is_empty() {
-        return page("Cerca nei log", "Non ci sono ancora sorgenti.\nScegli «Aggiungi cartella, file o container» dal menu principale.");
+        return page(
+            "Cerca nei log",
+            "Non ci sono ancora sorgenti.\nScegli «I miei siti → Nuovo sito» dal menu principale.",
+        );
     }
     let mut choices = vec!["Tutte le sorgenti".into()];
     choices.extend(sources.iter().map(|s| s.id.clone()));
@@ -996,7 +1308,7 @@ fn source_settings(dir: &Path) -> Result<()> {
                 ],
             )? == Some(0)
             {
-                add_source(dir)?;
+                add_source(dir, None)?;
             } else {
                 return Ok(());
             }
@@ -1008,7 +1320,7 @@ fn source_settings(dir: &Path) -> Result<()> {
                 format!(
                     "{} · {} · {}",
                     s.label.as_deref().unwrap_or(&s.id),
-                    s.period(),
+                    s.retention,
                     if s.enabled {
                         "raccolta abilitata"
                     } else {
@@ -1030,7 +1342,7 @@ fn source_settings(dir: &Path) -> Result<()> {
         };
         let source = &sources[index];
         let options = vec![
-            format!("Cambia durata: ora {}", source.period()),
+            format!("Cambia durata: ora {}", source.retention),
             if source.enabled {
                 "Metti in pausa la raccolta".into()
             } else {
@@ -1042,12 +1354,13 @@ fn source_settings(dir: &Path) -> Result<()> {
             "Pulizia dei file originali conclusi".into(),
             "Scollega mantenendo lo storico".into(),
             "Ricollega un container sostitutivo".into(),
+            "Assegna a un sito".into(),
             "Indietro".into(),
         ];
         match menu(&source.id, &options)? {
             Some(0) => {
                 let Some(days) =
-                    pick_period("Per quanto tempo vuoi conservare i log?", source.period())?
+                    pick_period("Per quanto tempo vuoi conservare i log?", source.retention)?
                 else {
                     continue;
                 };
@@ -1061,7 +1374,7 @@ fn source_settings(dir: &Path) -> Result<()> {
                         "verranno eliminate dall'archivio. Gli originali non vengono toccati."
                     ),
                     source.id,
-                    source.period(),
+                    source.retention,
                     days = days
                 );
                 if guided_menu(
@@ -1163,8 +1476,12 @@ fn source_settings(dir: &Path) -> Result<()> {
                     "Che tipo di log è?",
                     &[
                         "Accessi (può contenere IP)",
-                        "Generico / applicazione",
+                        "Applicazione",
                         "Errori e stack trace",
+                        "Database",
+                        "Accessi amministrativi",
+                        "Sistema",
+                        "Altro",
                     ],
                 )?
                 else {
@@ -1177,8 +1494,12 @@ fn source_settings(dir: &Path) -> Result<()> {
                         log_kind: Some(
                             [
                                 crate::model::LogKind::Access,
-                                crate::model::LogKind::Generic,
+                                crate::model::LogKind::Application,
                                 crate::model::LogKind::Error,
+                                crate::model::LogKind::Database,
+                                crate::model::LogKind::AdminAccess,
+                                crate::model::LogKind::System,
+                                crate::model::LogKind::Other,
                             ][kind],
                         ),
                         ..Default::default()
@@ -1193,18 +1514,26 @@ fn source_settings(dir: &Path) -> Result<()> {
                     )?;
                     continue;
                 }
-                match choose(
-                    "File originali",
-                    &[
-                        "Mantieni gli originali (solo lettura)",
-                        "Archivia ed elimina file consegnati come conclusi",
-                    ],
-                )? {
+                let mut options = vec![
+                    "Mantieni gli originali (solo lettura)",
+                    "Archivia ed elimina file consegnati come conclusi",
+                ];
+                if matches!(
+                    &source.input,
+                    Input::File {
+                        rotated_pattern: Some(_),
+                        ..
+                    }
+                ) {
+                    options.push("Attiva la pulizia dei ruotati verificati e fermi da 24 ore");
+                }
+                match choose("File originali", &options)? {
                     Some(0) => {
                         crate::management::apply(
                             dir,
                             crate::management::Change {
                                 name: source.id.clone(),
+                                remove_rotated: Some(false),
                                 completed_dir: Some(String::new()),
                                 ..Default::default()
                             },
@@ -1236,6 +1565,16 @@ fn source_settings(dir: &Path) -> Result<()> {
                                 },
                             )?;
                         }
+                    }
+                    Some(2) => {
+                        crate::management::apply(
+                            dir,
+                            crate::management::Change {
+                                name: source.id.clone(),
+                                remove_rotated: Some(true),
+                                ..Default::default()
+                            },
+                        )?;
                     }
                     _ => {}
                 }
@@ -1289,6 +1628,13 @@ fn source_settings(dir: &Path) -> Result<()> {
                     },
                 )?;
             }
+            Some(8) => {
+                let site = prompt(
+                    "Nome o identificatore del sito (vuoto per togliere il sito)",
+                    &source.site,
+                )?;
+                config::assign(dir, &source.id, &site)?;
+            }
             _ => {}
         }
     }
@@ -1310,31 +1656,61 @@ fn service_menu(dir: &Path) -> Result<()> {
             "Avvia",
             "Ferma",
             "Mostra lo stato",
+            "Togli il servizio",
         ],
     )?
     else {
         return Ok(());
     };
     if choice == 3 {
-        let text = if crate::service::is_active()? {
+        let d = crate::service::details();
+        let mut text = if d.failed {
+            "Fermo, serve un intervento: il servizio si è fermato con un errore o ha finito i riavvii automatici. Guarda «loglem diagnostics», correggi la causa e riavvialo.".to_owned()
+        } else if d.active {
             format!(
-                "In esecuzione: i log vengono letti in automatico.\n{}",
+                "In esecuzione{}{}: i log vengono letti in automatico.\n{}",
+                d.since
+                    .as_deref()
+                    .map(|s| format!(" dal {s}"))
+                    .unwrap_or_default(),
+                d.restarts
+                    .map(|n| format!(" · riavvii: {n}"))
+                    .unwrap_or_default(),
                 web_address_text(dir)?
             )
+        } else if d.installed {
+            "Installato ma fermo: i log vengono letti solo con «Leggi i log adesso». Sceglilo con «Avvia».".to_owned()
         } else {
-            "Fermo: i log vengono letti solo con «Leggi i log adesso».".to_owned()
+            "Non installato: Loglem legge i log solo mentre è aperto. Scegli «Installa e avvia il servizio».".to_owned()
         };
+        text.push_str(&format!("\n{}", crate::monitor::line(dir)));
         return page("Raccolta automatica", &text);
     }
+    if choice == 0 {
+        let report = crate::service::install(dir, true)?;
+        let text = format!(
+            "Fatto. Il servizio raccoglie i log e mostra la pagina web.\n{}\n\n{}\n\n\
+             Per farlo partire all'accensione anche senza login, un amministratore\n\
+             deve abilitare il «lingering» dell'utente (vedi il README).",
+            web_address_text(dir)?,
+            report.text()
+        );
+        return page("Raccolta automatica", &text);
+    }
+    if choice == 4 {
+        crate::service::uninstall(dir)?;
+        return page(
+            "Raccolta automatica",
+            "Servizio tolto. I dati e le impostazioni di Loglem sono rimasti.\nPer rimetterlo: «Installa e avvia il servizio».",
+        );
+    }
     let action = match choice {
-        0 => ServiceAction::Install { start: true },
         1 => ServiceAction::Start,
         _ => ServiceAction::Stop,
     };
     cli::execute(dir, Action::Service { action })?;
     let text = format!(
-        "Fatto. Il servizio raccoglie i log e mostra la pagina web.\n{}\n\n\
-         Per farlo partire all'accensione anche senza login, un amministratore\n\
+        "Fatto.\n{}\n\nPer farlo partire all'accensione anche senza login, un amministratore\n\
          deve abilitare il «lingering» dell'utente (vedi il README).",
         web_address_text(dir)?
     );
@@ -1356,6 +1732,8 @@ fn config_menu(dir: &Path) -> Result<()> {
             "Esporta la configurazione in un file",
             "Importa la configurazione da un file",
             "Ogni quanti secondi leggere i log",
+            "Controllo automatico (acceso, ogni quanti minuti)",
+            "Avvisi per mail (facoltativo)",
         ],
     )?
     else {
@@ -1363,6 +1741,12 @@ fn config_menu(dir: &Path) -> Result<()> {
     };
     if choice == 0 {
         return page("Cartella dei dati", &dir.display().to_string());
+    }
+    if choice == 4 {
+        return monitor_menu(dir);
+    }
+    if choice == 5 {
+        return email_menu(dir);
     }
     let action = match choice {
         1 => ConfigAction::Export {
@@ -1380,6 +1764,133 @@ fn config_menu(dir: &Path) -> Result<()> {
         },
     };
     cli::execute(dir, Action::Config { action })
+}
+
+fn monitor_menu(dir: &Path) -> Result<()> {
+    let s = config::load(dir)?.alerts.monitor;
+    let Some(choice) = choose(
+        &format!("Controllo automatico · {}", crate::monitor::line(dir)),
+        &[
+            if s.enabled {
+                "Spegni il controllo automatico"
+            } else {
+                "Accendi il controllo automatico"
+            },
+            "Cambia ogni quanti minuti",
+            "Controlla adesso",
+        ],
+    )?
+    else {
+        return Ok(());
+    };
+    match choice {
+        0 => crate::monitor::configure(dir, Some(!s.enabled), None)?,
+        1 => {
+            let minutes = prompt("Ogni quanti minuti (da 1 a 1440)", &s.minutes.to_string())?;
+            crate::monitor::configure(dir, None, Some(minutes.trim().parse()?))?;
+        }
+        _ => {
+            crate::monitor::run(dir)?;
+        }
+    }
+    page("Controllo automatico", &crate::monitor::line(dir))
+}
+
+fn email_menu(dir: &Path) -> Result<()> {
+    let status = crate::email::status(dir)?;
+    let Some(choice) = choose(
+        if status.active {
+            "Avvisi per mail · attivi"
+        } else {
+            "Avvisi per mail · spenti"
+        },
+        &[
+            "Mostra come sono configurati",
+            "Configura (chiave di Resend, mittente, destinatari)",
+            "Invia una mail di prova",
+            "Disattiva e cancella la chiave",
+        ],
+    )?
+    else {
+        return Ok(());
+    };
+    match choice {
+        0 => {
+            let mut text = if status.configured {
+                format!(
+                    "Mittente: {}\nDestinatari: {}\nLimite: {} mail all'ora\nChiave: {}",
+                    status.from,
+                    status.to.join(", "),
+                    status.hourly_limit,
+                    if status.key_set {
+                        "salvata (non si può rileggere)"
+                    } else {
+                        "mancante"
+                    }
+                )
+            } else {
+                "Non configurati. Se non li configuri, gli avvisi si vedono solo qui, nella pagina e con «loglem check».".to_owned()
+            };
+            if let Some(last) = status.last {
+                text.push_str(&format!(
+                    "\nUltimo invio: {} · {}{}",
+                    last.at,
+                    if last.ok { "riuscito" } else { "NON riuscito" },
+                    last.error.map(|e| format!(" · {e}")).unwrap_or_default()
+                ));
+            }
+            page("Avvisi per mail", &text)
+        }
+        1 => {
+            let from = prompt("Mittente (per esempio noreply@tuodominio.it)", &status.from)?;
+            let to = prompt(
+                "A chi scrivere (fino a 5 indirizzi, separati da virgola)",
+                &status.to.join(", "),
+            )?;
+            let page_url = prompt(
+                "Indirizzo della pagina da scrivere nella mail (facoltativo, Invio per saltare)",
+                status.page_url.as_deref().unwrap_or(""),
+            )?;
+            let note = if status.key_set {
+                "Chiave di Resend (Invio per tenere quella salvata): "
+            } else {
+                "Chiave di Resend (non viene mostrata): "
+            };
+            let key = crate::access::read_hidden(note)?;
+            crate::email::configure(
+                dir,
+                crate::email::Settings {
+                    from,
+                    to: to
+                        .split(',')
+                        .map(|s| s.trim().to_owned())
+                        .filter(|s| !s.is_empty())
+                        .collect(),
+                    page_url: Some(page_url).filter(|u| !u.trim().is_empty()),
+                    hourly_limit: status.hourly_limit,
+                },
+                Some(&key),
+            )?;
+            page(
+                "Avvisi per mail",
+                "Salvato. Scegli «Invia una mail di prova» per controllare che arrivi.",
+            )
+        }
+        2 => {
+            crate::email::send_test(dir)?;
+            page(
+                "Avvisi per mail",
+                "Mail di prova partita. Controlla la casella di posta.",
+            )
+        }
+        _ => {
+            crate::email::disable(dir)?;
+            page(
+                "Avvisi per mail",
+                "Spenti. La chiave è stata cancellata da questo computer.",
+            )
+        }
+    }
 }
 
 fn update_menu(dir: &Path) -> Result<()> {
