@@ -49,7 +49,10 @@ pub fn scan(dir: &Path) -> Result<Value> {
         }
     }
     for f in crate::discover::find_all() {
-        items.insert(f.path.display().to_string(),json!({"kind":f.kind,"path":f.path,"bytes":fs::metadata(&f.path).ok().map(|m|m.len()),"program":f.program}));
+        items.insert(
+            f.path.display().to_string(),
+            json!({"kind":"file","path":f.path,"bytes":fs::metadata(&f.path).ok().map(|m|m.len()),"program":f.program}),
+        );
     }
     for rt in [podman::Runtime::Podman, podman::Runtime::Docker] {
         match podman::discover_with(rt, None) {
@@ -82,7 +85,22 @@ pub fn scan(dir: &Path) -> Result<Value> {
         }
         Err(_) => notes.push("Journal non disponibile".into()),
     }
-    items.insert("preset:cron".into(),json!({"kind":"journal","journal":{"identifiers":["CRON","CROND","cron","crond"]},"name":"cron","program":"Cron"}));
+    // Le attività pianificate scrivono nel journal con i nomi indicati dalla loro ricetta.
+    for recipe in crate::recipes::all()
+        .iter()
+        .filter(|r| r.in_category("scheduled"))
+    {
+        if let Some(journal) = recipe
+            .journal
+            .as_ref()
+            .filter(|j| !j.identifiers.is_empty())
+        {
+            items.insert(
+                format!("preset:{}", recipe.id),
+                json!({"kind":"journal","journal":{"identifiers":journal.identifiers},"name":recipe.id,"program":recipe.name}),
+            );
+        }
+    }
     for item in items.values_mut() {
         item["connected"] =
             json!(cfg
@@ -104,10 +122,11 @@ pub fn scan(dir: &Path) -> Result<Value> {
                                     })
                                 }))
                     }),
-                    Input::Folder { path } => item["path"]
-                        .as_str()
-                        .is_some_and(|p| Path::new(p).parent() == Some(path)
-                            && (p.ends_with(".log") || p.ends_with(".log.gz"))),
+                    Input::Folder { path, .. } =>
+                        item["path"]
+                            .as_str()
+                            .is_some_and(|p| Path::new(p).parent() == Some(path)
+                                && (p.ends_with(".log") || p.ends_with(".log.gz"))),
                     Input::Journal(f) =>
                         if item["kind"] == "journal" {
                             if item["program"] == "Cron" {

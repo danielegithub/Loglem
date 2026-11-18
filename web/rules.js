@@ -22,8 +22,9 @@ function tabulate(id, headings, rows) {
   for (const text of headings) head.append(element('th', text));
   for (const row of rows) {
     const tr = body.insertRow();
-    for (const value of row) {
+    for (const [index, value] of row.entries()) {
       const cell = tr.insertCell();
+      cell.dataset.label = headings[index];
       if (value instanceof Node) cell.append(value);
       else cell.textContent = value;
     }
@@ -60,7 +61,7 @@ async function loadRulesPage() {
       .map((n) => [n, 'Modello · ' + n]),
   ]);
   $('known-sites').replaceChildren(
-    ...[...new Set(state.sources.map((s) => s.site).filter(Boolean))].map((s) => new Option(s)),
+    ...orderedSites().map(s => new Option(s.name, siteInputValue(s))),
   );
   $('total-quota').value = policyState.rules.max_mb;
   populateClass();
@@ -76,7 +77,7 @@ async function loadRulesPage() {
     return [
       s.label || s.source,
       s.origin + ' · ' + s.archive,
-      s.site || '—',
+      state.sites[s.site]?.name || 'Senza sito',
       s.class || 'Individuale',
       rule?.reason || '—',
       periodText(sourcePeriod(s)),
@@ -134,7 +135,8 @@ function showBackupStatus(s) {
 }
 function populateAssignment() {
   const s = state.sources.find((s) => s.source === $('assign-source').value);
-  $('assign-site').value = s?.site || '';
+  const site = state.sites[s?.site];
+  $('assign-site').value = site ? siteInputValue(site) : '';
   $('assign-class').value = s?.class || '';
 }
 function populateProof() {
@@ -323,51 +325,24 @@ function renderMap() {
       i.connected.length
         ? ''
         : actionButton('Collega', () => {
-            window.addEventListener(
-              'hashchange',
-              () => {
-                let input = { kind: i.kind };
-                if (i.path) input.path = i.path;
-                if (i.container) input.container = i.container;
-                if (i.journal) input.journal = i.journal;
-                addKind = i.kind;
-                configureSource(
-                  input,
-                  i.program + ' · ' + (i.path || i.name),
-                  i.name || i.path.split('/').pop(),
-                );
-                if (['Caddy', 'Nginx', 'Apache', 'Traefik'].includes(i.program))
-                  $('source-kind').value = 'access';
-              },
-              { once: true },
-            );
-            location.hash = '#add';
+            const source = { kind: i.kind };
+            if (i.path) source.path = i.path;
+            if (i.container) source.container = i.container;
+            if (i.journal) source.journal = i.journal;
+            return addFromMap(source, i.program + ' · ' + (i.path || i.name));
           }),
     ]);
   tabulate('map-result', ['Tipo', 'Percorso o nome', 'Spazio originale', 'Collegamenti', ''], rows);
 }
-$('choose-cron').onclick = () => {
-  addKind = 'journal';
-  configureSource(
-    { kind: 'journal', journal: { identifiers: ['CRON', 'CROND', 'cron', 'crond'] } },
-    'Cron · esecuzioni registrate nel journal',
-    'cron',
-  );
-};
-$('choose-traefik').onclick = () =>
-  perform($('choose-traefik'), async () => {
-    addKind = 'traefik';
-    prepareFolderStep();
-    showWizardStep(2);
-    $('folder-step-title').textContent = 'Scegli il file degli accessi di Traefik';
-    $('folder-step-help').textContent =
-      'Apri la cartella indicata da accessLog.filePath nella configurazione di Traefik.';
-    $('folder-preview-help').textContent = 'Scegli il file di accesso. Loglem legge JSON e CLF.';
-    await openFolder();
-  });
 for (const id of ['search-site', 'search-question'])
   $(id).onchange = () => {
     stopLive();
+    if (id === 'search-site') {
+      const site = $('search-site').value;
+      history.replaceState(null, '', site ? '#logs/site/' + site : '#logs');
+      syncSourceSelect();
+    }
+    renderLogStatus();
     const scoped = !!$('search-site').value || !!$('search-question').value;
     $('live').disabled = scoped;
     if (scoped) $('live').checked = false;

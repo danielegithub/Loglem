@@ -44,10 +44,7 @@ impl Class {
             "La classe modificherebbe il testo già sigillato della sorgente {}",
             source.id
         );
-        source.retention = Some(self.period);
-        if self.period.unit == crate::model::RetentionUnit::Days {
-            source.retention_days = self.period.amount;
-        }
+        source.retention = self.period;
         source.proof = self.seal.then(|| proof::Proof {
             tsa: self.tsa.clone(),
         });
@@ -84,7 +81,7 @@ impl Rules {
             if let Some(name) = &s.class {
                 let class = self.classes.get(name).context("Classe inesistente")?;
                 ensure!(
-                    s.period() == class.period
+                    s.retention == class.period
                         && s.proof.as_ref().map(|p| &p.tsa) == class.seal.then_some(&class.tsa)
                         && s.privacy.mask_ips_after_days == class.mask_ips.then_some(0),
                     "La sorgente {} segue la classe {name}: modifica la classe o scollegala prima",
@@ -166,7 +163,7 @@ fn limit(dir: &Path, sources: &[&Source], mb: u32) -> Result<()> {
             if s.proof.is_none() && !proof::chain_path(dir, &s.id).exists() {
                 if let Some(time) =
                     db.db
-                        .query_row("SELECT min(event_ns) FROM entries", [], |r| {
+                        .query_row("SELECT min(t) FROM (SELECT min(event_ns) t FROM entries UNION ALL SELECT min(first_ns) FROM blocks)", [], |r| {
                             r.get::<_, Option<i64>>(0)
                         })?
                 {
@@ -183,6 +180,7 @@ fn limit(dir: &Path, sources: &[&Source], mb: u32) -> Result<()> {
             .context("Quota insufficiente: restano archivi sigillati o metadati SQLite")?;
         let cutoff = oldest.get(1).map_or(i64::MAX, |v| v.0);
         let db = &dbs[idx].1.db;
+        let thawed=crate::blocks::unpack(db,"id IN (SELECT block_id FROM (SELECT block_id FROM log_rows WHERE event_ns<=? ORDER BY event_ns,id LIMIT 256) WHERE block_id IS NOT NULL)",&[&cutoff])?;
         // Stima il lotto dai byte effettivi delle righe per non svuotare un archivio
         // quando bastano pochi messaggi grandi.
         let mut sizes=db.prepare("SELECT length(CAST(message AS blob)) FROM entries WHERE event_ns<=? ORDER BY event_ns,id LIMIT 256")?;
@@ -196,6 +194,9 @@ fn limit(dir: &Path, sources: &[&Source], mb: u32) -> Result<()> {
             }
         }
         db.execute("DELETE FROM entries WHERE id IN (SELECT id FROM entries WHERE event_ns<=?1 ORDER BY event_ns,id LIMIT ?2)",rusqlite::params![cutoff,batch])?;
+        if thawed {
+            crate::blocks::pack(db, i64::MAX)?;
+        }
     }
     for (_, db) in dbs {
         compact(&db)?;
@@ -286,6 +287,7 @@ pub fn change(dir: &Path, body: serde_json::Value) -> Result<()> {
                 class,
                 site,
             } => {
+                let site = crate::config::assigned_site(cfg, &site);
                 let s = cfg
                     .sources
                     .iter_mut()
@@ -299,7 +301,7 @@ pub fn change(dir: &Path, body: serde_json::Value) -> Result<()> {
                         .apply(dir, s)?;
                 }
                 s.class = class;
-                s.site = site.trim().into();
+                s.site = site;
             }
             Change::Space { max_mb } => cfg.rules.max_mb = max_mb,
             Change::Proof {
@@ -367,6 +369,7 @@ mod tests {
             proof: Some(proof::Proof::default()),
             input: crate::model::Input::Folder {
                 path: dir.path().to_owned(),
+                pattern: None,
             },
             ..Default::default()
         };
@@ -381,11 +384,8 @@ mod tests {
         assert_eq!(
             store
                 .db
-                .query_row(
-                    "SELECT count(*) FROM entries WHERE typeof(message)='blob'",
-                    [],
-                    |r| r.get::<_, i64>(0)
-                )
+                .query_row("SELECT coalesce(sum(lines),0) FROM blocks", [], |r| r
+                    .get::<_, i64>(0))
                 .unwrap(),
             3
         );
@@ -433,7 +433,12 @@ mod tests {
         let sources = [&old, &new, &sealed];
         for (n, s) in sources.iter().enumerate() {
             let mut db = Archive::open(&s.archive_path(dir.path())).unwrap();
-            entries(&mut db, &s.id, 1_000_000 * n as i64, 200);
+            entries(
+                &mut db,
+                &s.id,
+                timestamps::now_ns() + 1_000_000 * n as i64,
+                200,
+            );
         }
         limit(dir.path(), &sources, 2).unwrap();
         let bytes: u64 = sources

@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Source {
@@ -9,11 +9,13 @@ pub struct Source {
     pub class: Option<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub site: String,
+    /// Il programma che scrive il log (id di una ricetta), solo come etichetta.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<String>,
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub retention: Option<Retention>,
+    pub retention: Retention,
     #[serde(default)]
     pub log_kind: LogKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -28,28 +30,32 @@ pub struct Source {
     /// Mascheramento degli IP e campi JSON da tenere.
     #[serde(default, skip_serializing_if = "crate::privacy::Privacy::is_default")]
     pub privacy: crate::privacy::Privacy,
-    /// Archivia ed elimina i file ruotati (es. Caddy) dopo averli verificati.
+    /// Archivia ed elimina i file ruotati dopo averli verificati.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub remove_rotated: bool,
     /// Le scelte sui suggerimenti (fatto, non mi riguarda, rimandato), con data e utente.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub advice: std::collections::BTreeMap<String, crate::advice::Choice>,
-    pub retention_days: u32,
     pub enabled: bool,
     #[serde(flatten)]
     pub input: Input,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum LogKind {
     Access,
     #[default]
-    Generic,
+    #[serde(alias = "generic")]
+    Application,
+    Database,
+    AdminAccess,
+    System,
+    Other,
     Error,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RetentionUnit {
     Days,
@@ -65,6 +71,13 @@ pub struct Retention {
 }
 
 impl Retention {
+    pub fn days(amount: u32) -> Self {
+        Self {
+            amount,
+            unit: RetentionUnit::Days,
+        }
+    }
+
     pub fn validate(&self) -> anyhow::Result<()> {
         let max = match self.unit {
             RetentionUnit::Days => 36500,
@@ -106,12 +119,6 @@ impl std::fmt::Display for Retention {
     }
 }
 impl Source {
-    pub fn period(&self) -> Retention {
-        self.retention.unwrap_or(Retention {
-            amount: self.retention_days,
-            unit: RetentionUnit::Days,
-        })
-    }
     pub fn archive_path(&self, dir: &std::path::Path) -> PathBuf {
         self.archive_dir
             .clone()
@@ -126,9 +133,10 @@ impl Default for Source {
             journal_runtime: None,
             class: None,
             site: String::new(),
+            program: None,
             label: None,
-            retention: None,
-            log_kind: LogKind::Generic,
+            retention: Retention::days(28),
+            log_kind: LogKind::Application,
             archive_dir: None,
             completed_dir: None,
             detached: false,
@@ -136,10 +144,10 @@ impl Default for Source {
             advice: Default::default(),
             privacy: Default::default(),
             proof: None,
-            retention_days: 28,
             enabled: true,
             input: Input::Folder {
                 path: PathBuf::new(),
+                pattern: None,
             },
         }
     }
@@ -150,6 +158,9 @@ impl Default for Source {
 pub enum Input {
     Folder {
         path: PathBuf,
+        /// I nomi dei file da leggere (es. `*.log`, `*_log`, `*.out`). Vuoto = `*.log`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pattern: Option<String>,
     },
     File {
         path: PathBuf,
@@ -181,9 +192,31 @@ pub struct UpdateSettings {
     pub public_key: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Site {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub note: String,
+}
+
+pub const SERVER_SITE: &str = "server";
+
+impl Site {
+    pub fn server() -> Self {
+        Self {
+            id: SERVER_SITE.into(),
+            name: "Questo server".into(),
+            note: String::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    pub sites: BTreeMap<String, Site>,
     #[serde(default)]
     pub rules: crate::rules::Rules,
     pub version: u32,
@@ -204,7 +237,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             rules: Default::default(),
-            version: 1,
+            version: 2,
+            sites: BTreeMap::from([(SERVER_SITE.into(), Site::server())]),
             poll_seconds: 5,
             sources: vec![],
             updates: None,
@@ -270,6 +304,10 @@ pub struct SourceStatus {
     pub journal_runtime: Option<crate::sources::podman::Runtime>,
     pub class: Option<String>,
     pub site: String,
+    /// Il programma riconosciuto (nome della ricetta), solo come etichetta.
+    pub program: Option<String>,
+    /// Il formato riconosciuto dal contenuto (es. «JSON», «common/combined»).
+    pub format: Option<String>,
     pub proof: Option<crate::proof::Proof>,
     pub input: Input,
     pub archive_dir: Option<PathBuf>,
@@ -296,5 +334,4 @@ pub struct SourceStatus {
     pub earliest: Option<String>,
     pub last_collection: Option<String>,
     pub message: String,
-    pub retention_days: u32,
 }
