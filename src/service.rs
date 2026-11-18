@@ -63,7 +63,28 @@ fn xml(path: &Path) -> Result<String> {
         .replace('>', "&gt;"))
 }
 
-pub fn install(dir: &Path, start: bool) -> Result<()> {
+/// Cosa è stato installato, da mostrare a chi ha lanciato il comando.
+#[derive(Debug, Clone)]
+pub struct Report {
+    pub file: PathBuf,
+    pub manager: &'static str,
+    pub check_minutes: u32,
+}
+
+impl Report {
+    pub fn text(&self) -> String {
+        format!(
+            "Servizio installato ({}): {}\n\
+             Controllo automatico: acceso, ogni {} minuti, dentro il servizio (non serve cron).\n\
+             Per toglierlo: loglem service uninstall",
+            self.manager,
+            self.file.display(),
+            self.check_minutes
+        )
+    }
+}
+
+pub fn install(dir: &Path, start: bool) -> Result<Report> {
     supported()?;
     util::private_dir(dir)?;
     let data_dir = fs::canonicalize(dir)?;
@@ -82,10 +103,195 @@ pub fn install(dir: &Path, start: bool) -> Result<()> {
             data_dir,
         })?,
     )?;
+    // Il controllo automatico gira dentro il servizio: installarlo lo accende.
+    crate::monitor::configure(dir, Some(true), None)?;
     if start {
         self::start()?;
     }
-    Ok(())
+    Ok(Report {
+        file: if cfg!(target_os = "macos") {
+            agent_path()?
+        } else {
+            home()?.join(".config/systemd/user").join(UNIT)
+        },
+        manager: if cfg!(target_os = "macos") {
+            "launchd"
+        } else {
+            "systemd"
+        },
+        check_minutes: crate::config::load(dir)?.alerts.monitor.minutes,
+    })
+}
+
+/// Toglie il servizio: lo ferma, lo disabilita e cancella il file che Loglem aveva scritto.
+/// I dati e le impostazioni restano.
+pub fn uninstall(dir: &Path) -> Result<()> {
+    supported()?;
+    if cfg!(target_os = "macos") {
+        let path = agent_path()?;
+        if path.exists() {
+            if !fs::read_to_string(&path)?.contains(MARKER) {
+                bail!(
+                    "{} non è stato scritto da Loglem: non lo tolgo",
+                    path.display()
+                );
+            }
+            let _ = launchctl(&["bootout", &format!("{}/{LABEL}", launchd_domain())]);
+            fs::remove_file(&path)?;
+        }
+    } else {
+        let path = home()?.join(".config/systemd/user").join(UNIT);
+        if path.exists() {
+            if !fs::read_to_string(&path)?.starts_with(MARKER) {
+                bail!(
+                    "{} non è stato scritto da Loglem: non lo tolgo",
+                    path.display()
+                );
+            }
+            let _ = systemctl(&["disable", "--now", UNIT]);
+            fs::remove_file(&path)?;
+            let _ = systemctl(&["daemon-reload"]);
+        }
+    }
+    match fs::remove_file(dir.join("installation.json")) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+        _ => Ok(()),
+    }
+}
+
+/// Lo stato del servizio com'è adesso, per la pagina «Sistema».
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct Details {
+    pub supported: bool,
+    pub installed: bool,
+    pub active: bool,
+    /// Si è fermato con un errore o ha finito i riavvii automatici: serve un intervento.
+    pub failed: bool,
+    pub since: Option<String>,
+    pub restarts: Option<u32>,
+    pub main_pid: Option<u32>,
+    /// Questa pagina è servita proprio dal servizio (e non da un `loglem web` avviato a mano).
+    pub this_process: bool,
+    pub file: Option<String>,
+    pub manager: &'static str,
+}
+
+fn property<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    text.lines()
+        .find_map(|line| line.strip_prefix(key)?.strip_prefix('='))
+        .map(str::trim)
+}
+
+/// «Tue 2026-11-17 10:00:00 UTC» → data in formato standard.
+fn systemd_time(text: &str) -> Option<String> {
+    let rest = text.split_once(' ')?.1.trim().strip_suffix(" UTC")?;
+    let time = chrono::NaiveDateTime::parse_from_str(rest, "%Y-%m-%d %H:%M:%S").ok()?;
+    Some(crate::timestamps::format_ns(
+        time.and_utc().timestamp_nanos_opt()?,
+    ))
+}
+
+fn parse_systemd(text: &str) -> Details {
+    let active = property(text, "ActiveState") == Some("active");
+    let pid = property(text, "MainPID")
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|p| *p > 0);
+    Details {
+        supported: true,
+        active,
+        failed: property(text, "ActiveState") == Some("failed"),
+        since: active
+            .then(|| property(text, "ActiveEnterTimestamp").and_then(systemd_time))
+            .flatten(),
+        restarts: property(text, "NRestarts").and_then(|v| v.parse().ok()),
+        main_pid: pid,
+        manager: "systemd",
+        ..Details::default()
+    }
+}
+
+fn parse_launchd(text: &str) -> Details {
+    let value = |key: &str| {
+        text.lines()
+            .find_map(|l| l.trim().strip_prefix(key)?.strip_prefix(" = "))
+            .map(str::trim)
+    };
+    let active = value("state") == Some("running");
+    let failed = !active
+        && value("last exit code")
+            .and_then(|v| v.parse::<i32>().ok())
+            .is_some_and(|code| code != 0);
+    Details {
+        supported: true,
+        active,
+        failed,
+        restarts: value("runs")
+            .and_then(|v| v.parse::<u32>().ok())
+            .map(|n| n.saturating_sub(1)),
+        main_pid: value("pid").and_then(|v| v.parse().ok()),
+        manager: "launchd",
+        ..Details::default()
+    }
+}
+
+pub fn details() -> Details {
+    if supported().is_err() {
+        return Details::default();
+    }
+    let mut found;
+    if cfg!(target_os = "macos") {
+        let Ok(file) = agent_path() else {
+            return Details::default();
+        };
+        let installed = fs::read_to_string(&file).is_ok_and(|t| t.contains(MARKER));
+        let output = process::output(
+            Command::new("launchctl").args(["print", &format!("{}/{LABEL}", launchd_domain())]),
+            Duration::from_secs(10),
+        )
+        .map(|o| String::from_utf8_lossy(&o).into_owned())
+        .unwrap_or_default();
+        found = parse_launchd(&output);
+        found.installed = installed;
+        found.file = installed.then(|| file.display().to_string());
+    } else {
+        let Ok(home) = home() else {
+            return Details::default();
+        };
+        let file = home.join(".config/systemd/user").join(UNIT);
+        let installed = fs::read_to_string(&file).is_ok_and(|t| t.starts_with(MARKER));
+        let show = |extra: &[&str]| {
+            process::output(
+                Command::new("systemctl")
+                    .arg("--user")
+                    .arg("show")
+                    .arg(UNIT)
+                    .args(extra)
+                    .arg("--property=ActiveState,NRestarts,MainPID,ActiveEnterTimestamp"),
+                Duration::from_secs(10),
+            )
+            .map(|o| String::from_utf8_lossy(&o).into_owned())
+        };
+        // `--timestamp=utc` esiste da systemd 247: con uno più vecchio si perde solo «da quando».
+        let output = show(&["--timestamp=utc"])
+            .or_else(|_| show(&[]))
+            .unwrap_or_default();
+        found = parse_systemd(&output);
+        found.installed = installed;
+        found.file = installed.then(|| file.display().to_string());
+    }
+    found.this_process = found.main_pid == Some(std::process::id());
+    found
+}
+
+/// Riavvia il servizio. Se è questo stesso processo, la chiamata non torna.
+pub fn restart() -> Result<()> {
+    supported()?;
+    if cfg!(target_os = "macos") {
+        launchctl(&["kickstart", "-k", &format!("{}/{LABEL}", launchd_domain())])?;
+        Ok(())
+    } else {
+        systemctl(&["restart", UNIT])
+    }
 }
 
 fn write_systemd_unit(executable: &Path, data_dir: &Path) -> Result<()> {
@@ -251,4 +457,66 @@ pub fn installation(dir: &Path) -> Result<Installation> {
         bail!("This executable/data directory does not match the installed service");
     }
     Ok(install)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_a_running_systemd_service() {
+        let d = parse_systemd(
+            "ActiveState=active\nNRestarts=2\nMainPID=4321\nActiveEnterTimestamp=Tue 2026-11-17 10:00:00 UTC\n",
+        );
+        assert!(d.active && !d.failed);
+        assert_eq!(d.restarts, Some(2));
+        assert_eq!(d.main_pid, Some(4321));
+        assert_eq!(d.since.as_deref(), Some("2026-11-17T10:00:00.000000000Z"));
+    }
+
+    #[test]
+    fn a_failed_systemd_service_needs_attention_and_has_no_start_time() {
+        let d = parse_systemd(
+            "ActiveState=failed\nNRestarts=10\nMainPID=0\nActiveEnterTimestamp=Tue 2026-11-17 10:00:00 UTC\n",
+        );
+        assert!(d.failed && !d.active);
+        assert_eq!(d.main_pid, None);
+        assert_eq!(d.since, None);
+        assert_eq!(d.restarts, Some(10));
+    }
+
+    #[test]
+    fn an_old_systemd_without_utc_timestamps_still_gives_the_state() {
+        let d = parse_systemd(
+            "ActiveState=active\nActiveEnterTimestamp=Tue 2026-11-17 11:00:00 CET\nMainPID=7\n",
+        );
+        assert!(d.active);
+        assert_eq!(d.since, None);
+    }
+
+    #[test]
+    fn reads_launchd_state_and_restarts() {
+        let running = parse_launchd(
+            "\tstate = running\n\tpid = 99\n\truns = 3\n\tlast exit code = (never exited)\n",
+        );
+        assert!(running.active && !running.failed);
+        assert_eq!(running.restarts, Some(2));
+        assert_eq!(running.main_pid, Some(99));
+        let broken = parse_launchd("\tstate = waiting\n\truns = 11\n\tlast exit code = 1\n");
+        assert!(!broken.active && broken.failed);
+    }
+
+    #[test]
+    fn the_install_report_says_what_was_installed_and_how_to_remove_it() {
+        let text = Report {
+            file: PathBuf::from("/home/user/.config/systemd/user/loglem.service"),
+            manager: "systemd",
+            check_minutes: 5,
+        }
+        .text();
+        assert!(text.contains("loglem.service"));
+        assert!(text.contains("ogni 5 minuti"));
+        assert!(text.contains("non serve cron"));
+        assert!(text.contains("loglem service uninstall"));
+    }
 }

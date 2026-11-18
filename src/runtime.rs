@@ -49,13 +49,15 @@ impl Worker {
                             "Arresto anomalo della raccolta. La traccia è in «Problemi»."
                         ))
                     });
-                // Stato per gli altri programmi e notifica se i problemi sono cambiati.
-                let problems =
-                    crate::health::check(&dir, crate::health::DEFAULT_MAX_MINUTES, false)
-                        .map(|p| crate::alerts::hide_acknowledged(&dir, p));
-                if let Err(error) = problems.and_then(|p| crate::alerts::after_cycle(&dir, p)) {
-                    crate::diagnostics::error("alerts", "after_cycle", None, &error);
+                // Controllo di salute a intervalli (default 5 minuti), non a ogni lettura:
+                // salva lo stato per gli altri programmi e avvisa se qualcosa è cambiato.
+                if crate::monitor::due(&dir) {
+                    if let Err(error) = crate::monitor::run(&dir) {
+                        crate::diagnostics::error("monitor", "check", None, &error);
+                    }
                 }
+                // Una mail rimasta in coda (errore o limite orario) si riprova qui.
+                crate::email::retry(&dir);
                 if backup_task.as_ref().is_none_or(|task| task.is_finished())
                     && crate::config::load(&dir).is_ok_and(|c| {
                         c.rules

@@ -16,7 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     /// Può fare tutto: aggiungere sorgenti, cambiare impostazioni.
@@ -344,15 +344,20 @@ pub const COOKIE: &str = "loglem_session";
 
 /// Chiede una password nel terminale senza mostrarla.
 pub fn read_password(prompt: &str) -> Result<String> {
-    use crossterm::event::{read, Event, KeyCode, KeyEventKind, KeyModifiers};
-    use std::io::Write;
     if let Ok(password) = std::env::var("LOGLEM_PASSWORD") {
         return Ok(password);
     }
+    read_hidden(prompt)
+}
+
+/// Legge un segreto dalla tastiera senza mostrarlo (ignora le variabili d'ambiente).
+pub fn read_hidden(prompt: &str) -> Result<String> {
+    use crossterm::event::{read, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use std::io::Write;
     print!("{prompt}");
     std::io::stdout().flush()?;
     crossterm::terminal::enable_raw_mode()
-        .context("Serve un terminale per inserire la password")?;
+        .context("Serve un terminale per inserire il valore senza mostrarlo (se è la chiave di Resend, puoi usare la variabile LOGLEM_RESEND_KEY)")?;
     let mut password = String::new();
     let result = loop {
         match read() {

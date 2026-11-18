@@ -15,14 +15,27 @@ pub struct Alerts {
     /// Eseguito quando l'elenco dei problemi cambia; riceve il riepilogo in `LOGLEM_ALERTS`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    /// Il controllo di salute che Loglem fa da solo, a intervalli.
+    #[serde(default, skip_serializing_if = "crate::monitor::Settings::is_default")]
+    pub monitor: crate::monitor::Settings,
+    /// Avvisi per mail (facoltativi). La chiave del servizio non sta qui.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<crate::email::Settings>,
 }
 
 impl Alerts {
     pub fn is_default(&self) -> bool {
-        self.rules.is_empty() && self.command.is_none()
+        self.rules.is_empty()
+            && self.command.is_none()
+            && self.monitor.is_default()
+            && self.email.is_none()
     }
 
     pub fn validate(&self) -> Result<()> {
+        self.monitor.validate()?;
+        if let Some(email) = &self.email {
+            email.validate()?;
+        }
         let mut names = std::collections::HashSet::new();
         for rule in &self.rules {
             crate::config::validate_id(&rule.name)?;
@@ -119,12 +132,12 @@ pub fn evaluate(dir: &Path) -> Result<Vec<Problem>> {
                 count,
                 minutes,
             } => {
-                let since = now - i64::from(*minutes) * 60_000_000_000;
+                let since = now.saturating_sub(i64::from(*minutes).saturating_mul(60_000_000_000));
                 let mut found = 0;
                 for s in config.sources.iter().filter(|s| in_scope(&s.id, source)) {
                     let path = config::archive_path(dir, &s.id);
                     if path.exists() {
-                        found += Archive::open(&path)?.count_since(since, text)?;
+                        found += Archive::open(&path)?.pattern_hits(since, text, *minutes)?;
                     }
                 }
                 (found >= i64::from(*count))
@@ -177,6 +190,14 @@ pub fn acknowledge(dir: &Path, id: &str) -> Result<()> {
     util::atomic_write(&dir.join(ACKS), &serde_json::to_vec_pretty(&seen)?)
 }
 
+pub(crate) fn visible(dir: &Path, problems: Vec<Problem>) -> Vec<Problem> {
+    let seen = acks(dir);
+    problems
+        .into_iter()
+        .filter(|p| !seen.contains_key(&p.id))
+        .collect()
+}
+
 /// Toglie i problemi già visti; dimentica quelli risolti, così se ricompaiono si rivedono.
 pub fn hide_acknowledged(dir: &Path, problems: Vec<Problem>) -> Vec<Problem> {
     let mut seen = acks(dir);
@@ -201,21 +222,125 @@ struct HealthFile {
     checked_at: String,
     ok: bool,
     problems: Vec<Problem>,
+    /// Tutti i problemi aperti, anche quelli «segnati come visti»: serve a sapere da quando
+    /// durano e a distinguere un problema risolto da uno solo nascosto.
+    #[serde(default)]
+    open: BTreeMap<String, Open>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Open {
+    pub since: String,
+    pub text: String,
+}
+
+/// Cosa è cambiato tra un controllo e il precedente. Serve agli avvisi per mail.
+#[derive(Debug, Clone, Default)]
+pub struct Change {
+    /// Problemi comparsi ora e non ancora «visti».
+    pub opened: Vec<Problem>,
+    /// Problemi scomparsi: sono davvero risolti.
+    pub closed: Vec<Problem>,
+    /// Problemi non visti aperti da più di 24 ore, con le ore trascorse.
+    pub open_long: Vec<(Problem, i64)>,
+}
+
+impl Change {
+    pub fn is_empty(&self) -> bool {
+        self.opened.is_empty() && self.closed.is_empty() && self.open_long.is_empty()
+    }
+}
+
+const DAY_NS: i64 = 86_400_000_000_000;
+
+fn parse_ns(text: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(text)
+        .ok()?
+        .timestamp_nanos_opt()
+}
+
+/// Confronta i problemi di adesso con quelli del controllo precedente.
+/// `all` = tutti i problemi; `visible` = quelli non «segnati come visti».
+fn transitions(
+    previous: &BTreeMap<String, Open>,
+    all: &[Problem],
+    visible: &[Problem],
+    now: i64,
+) -> (BTreeMap<String, Open>, Change) {
+    let mut open = BTreeMap::new();
+    let mut change = Change::default();
+    for problem in all {
+        let known = previous.get(&problem.id);
+        open.insert(
+            problem.id.clone(),
+            Open {
+                since: known.map_or_else(|| crate::timestamps::format_ns(now), |k| k.since.clone()),
+                text: problem.text.clone(),
+            },
+        );
+    }
+    for problem in visible {
+        match previous.get(&problem.id) {
+            None => change.opened.push(problem.clone()),
+            Some(known) => {
+                let age = now.saturating_sub(parse_ns(&known.since).unwrap_or(now));
+                if age >= DAY_NS {
+                    change
+                        .open_long
+                        .push((problem.clone(), age / 3_600_000_000_000));
+                }
+            }
+        }
+    }
+    for (id, known) in previous {
+        if !open.contains_key(id) {
+            change.closed.push(Problem {
+                id: id.clone(),
+                source: None,
+                text: known.text.clone(),
+            });
+        }
+    }
+    (open, change)
+}
+
+/// Quando e con che esito è stato fatto l'ultimo controllo: (data, problemi aperti).
+pub fn last_check(dir: &Path) -> Option<(String, usize)> {
+    let file: HealthFile = serde_json::from_slice(&fs::read(dir.join(STATE)).ok()?).ok()?;
+    let count = file.problems.len();
+    (!file.checked_at.is_empty()).then_some((file.checked_at, count))
+}
+
+pub(crate) fn cached_rules(dir: &Path) -> Result<Vec<Problem>> {
+    match fs::read(dir.join(STATE)) {
+        Ok(bytes) => Ok(serde_json::from_slice::<HealthFile>(&bytes)?
+            .problems
+            .into_iter()
+            .filter(|p| p.id.starts_with("regola:"))
+            .collect()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Dopo ogni giro di raccolta: aggiorna `health.json` (leggibile da altri programmi) e,
 /// se l'elenco dei problemi è cambiato, esegue il comando di notifica configurato.
-pub fn after_cycle(dir: &Path, problems: Vec<Problem>) -> Result<()> {
+pub fn after_cycle(dir: &Path, problems: Vec<Problem>) -> Result<Change> {
+    let all = problems.clone();
+    let problems = hide_acknowledged(dir, problems);
     let previous: HealthFile = fs::read(dir.join(STATE))
         .ok()
         .and_then(|data| serde_json::from_slice(&data).ok())
         .unwrap_or_default();
     let ids = |list: &[Problem]| list.iter().map(|p| p.id.clone()).collect::<Vec<_>>();
     let changed = ids(&previous.problems) != ids(&problems);
+    let now = crate::timestamps::now_ns();
+    let (open, change) = transitions(&previous.open, &all, &problems, now);
     let state = HealthFile {
-        checked_at: crate::timestamps::format_ns(crate::timestamps::now_ns()),
+        checked_at: crate::timestamps::format_ns(now),
         ok: problems.is_empty(),
         problems,
+        open,
     };
     util::atomic_write(&dir.join(STATE), &serde_json::to_vec_pretty(&state)?)?;
     if changed {
@@ -223,7 +348,7 @@ pub fn after_cycle(dir: &Path, problems: Vec<Problem>) -> Result<()> {
             notify(&command, &state.problems);
         }
     }
-    Ok(())
+    Ok(change)
 }
 
 /// Esegue il comando dell'utente senza bloccare la raccolta; il testo arriva in variabili.
@@ -255,4 +380,76 @@ fn notify(command: &str, problems: &[Problem]) {
             crate::diagnostics::error("alerts", "notify", None, &error);
         }
     });
+}
+
+#[cfg(test)]
+mod transition_tests {
+    use super::*;
+
+    const NOW: i64 = 1_800_000_000_000_000_000;
+    const HOUR: i64 = 3_600_000_000_000;
+
+    fn problem(id: &str) -> Problem {
+        Problem {
+            id: id.into(),
+            source: None,
+            text: format!("testo di {id}"),
+        }
+    }
+
+    fn open(id: &str, hours_ago: i64) -> (String, Open) {
+        (
+            id.to_owned(),
+            Open {
+                since: crate::timestamps::format_ns(NOW - hours_ago * HOUR),
+                text: format!("testo di {id}"),
+            },
+        )
+    }
+
+    #[test]
+    fn new_resolved_and_long_open_problems_are_told_apart() {
+        let previous: BTreeMap<_, _> =
+            [open("vecchio", 30), open("recente", 2), open("risolto", 5)].into();
+        let all = vec![problem("vecchio"), problem("recente"), problem("nuovo")];
+        let (now_open, change) = transitions(&previous, &all, &all, NOW);
+        assert_eq!(
+            change
+                .opened
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>(),
+            ["nuovo"]
+        );
+        assert_eq!(
+            change
+                .closed
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>(),
+            ["risolto"]
+        );
+        assert_eq!(change.open_long.len(), 1);
+        assert_eq!(change.open_long[0].0.id, "vecchio");
+        assert_eq!(change.open_long[0].1, 30);
+        // «da quando» si conserva: il vecchio resta vecchio, il nuovo parte da adesso.
+        assert_eq!(now_open["vecchio"].since, previous["vecchio"].since);
+        assert_eq!(now_open["nuovo"].since, crate::timestamps::format_ns(NOW));
+    }
+
+    #[test]
+    fn a_problem_marked_as_seen_is_neither_new_nor_reminded_but_not_resolved_either() {
+        let previous: BTreeMap<_, _> = [open("visto", 30)].into();
+        let all = vec![problem("visto"), problem("nuovo-visto")];
+        // L'utente ha già «segnato come visto» entrambi: non sono tra i visibili.
+        let (now_open, change) = transitions(&previous, &all, &[], NOW);
+        assert!(
+            change.is_empty(),
+            "niente mail per quello che l'utente ha già visto"
+        );
+        assert!(now_open.contains_key("visto"), "il problema esiste ancora");
+        // Quando sparisce davvero, si dice che è risolto.
+        let (_, change) = transitions(&now_open, &[], &[], NOW + HOUR);
+        assert_eq!(change.closed.len(), 2);
+    }
 }
