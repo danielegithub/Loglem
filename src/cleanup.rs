@@ -30,6 +30,7 @@ pub struct Note {
 pub struct Report {
     /// Solo le sorgenti che leggono file hanno originali da ripulire.
     pub applies: bool,
+    pub matching_files: Option<Vec<String>>,
     pub loglem_on: bool,
     pub system: System,
     pub level: &'static str,
@@ -37,7 +38,7 @@ pub struct Report {
     pub notes: Vec<Note>,
     pub pattern: Option<String>,
     pub suggested_pattern: Option<String>,
-    /// Loglem può cancellare i file ruotati di questa sorgente (serve un modello dei nomi).
+    /// Loglem può cancellare i vecchi file di questa sorgente (serve un modello dei nomi).
     pub can_enable_rotated: bool,
     pub keep_days: u32,
 }
@@ -95,18 +96,14 @@ fn system_for(input: &Input, rules: Option<&Rules>) -> System {
                 if let Some(days) = roll.keep_for_days {
                     return System {
                         kind: "program",
-                        text: format!(
-                            "il programma stesso (tiene i file ruotati {days:.0} giorni)"
-                        ),
+                        text: format!("il programma stesso (tiene i vecchi file {days:.0} giorni)"),
                         days: Some(days.ceil() as u32),
                     };
                 }
                 if let Some(count) = roll.keep {
                     return System {
                         kind: "program",
-                        text: format!(
-                            "il programma stesso (tiene gli ultimi {count} file ruotati)"
-                        ),
+                        text: format!("il programma stesso (tiene gli ultimi {count} vecchi file)"),
                         days: None,
                     };
                 }
@@ -191,7 +188,7 @@ pub fn analyse(f: &Facts) -> (Report, Vec<Note>) {
         (true, _) if other => {
             notes.push(Note {
                 level: "warn",
-                text: "Non servono due sistemi che cancellano gli stessi file: se uno è sbagliato, l'altro lo nasconde. Consiglio: spegni la pulizia di Loglem. La copia nel suo archivio resta.".into(),
+                text: "Per evitare che due programmi cancellino gli stessi file, spegni la pulizia di Loglem scegliendo «Conserva i file originali».".into(),
             });
             (
                 "warn",
@@ -203,9 +200,9 @@ pub fn analyse(f: &Facts) -> (Report, Vec<Note>) {
         }
         (true, kind) => {
             let what = if f.loglem_handoff && !f.loglem_rotated {
-                "i file della cartella dei file conclusi"
+                "i log chiusi nella cartella scelta"
             } else {
-                "i file già ruotati"
+                "i vecchi file accanto al log"
             };
             notes.push(Note {
                 level: "info",
@@ -214,12 +211,12 @@ pub fn analyse(f: &Facts) -> (Report, Vec<Note>) {
             if kind == "none" && !f.rotated_present && f.loglem_rotated {
                 notes.push(Note {
                     level: "warn",
-                    text: "Nessuno ruota il file su cui il programma scrive, quindi Loglem non ha niente da cancellare e il file continua a crescere. Configura la rotazione nel programma o in logrotate.".into(),
+                    text: "Non abbiamo trovato vecchi file o una regola che ne crei. Se il programma scrive sempre nello stesso file, quel file continuerà a crescere.".into(),
                 });
             } else if kind == "unknown" {
                 notes.push(Note {
                     level: "info",
-                    text: "Su questo computer non c'è logrotate: controlla che il programma ruoti da sé i file, perché Loglem non ruota niente.".into(),
+                    text: "Loglem può pulire i vecchi file quando il programma chiude il log corrente e ne apre uno nuovo.".into(),
                 });
             }
             ("ok", format!("Li ripulisce Loglem: cancella {what}, dopo averli archiviati e controllati."))
@@ -235,19 +232,19 @@ pub fn analyse(f: &Facts) -> (Report, Vec<Note>) {
             notes.push(Note {
                 level: "warn",
                 text: if f.is_folder || f.pattern.is_some() {
-                    "Scegli una strada: configura logrotate o la rotazione del programma, oppure accendi qui sotto la pulizia di Loglem (cancella solo file già ruotati o conclusi).".into()
+                    "Controlla se il programma elimina già i vecchi file oppure accendi qui sotto la pulizia di Loglem.".into()
                 } else {
-                    "Scegli una strada: configura logrotate o la rotazione del programma. La pulizia di Loglem richiede prima un modello dei nomi dei file ruotati (campo qui sotto).".into()
+                    "Per scegliere quali file leggere, apri Avanzate e controlla il modello dei nomi.".into()
                 },
             });
             (
                 "warn",
-                "Nessuno ripulisce questi file: continuano a crescere.".to_owned(),
+                "Non è stata trovata una regola di pulizia. Se i file si accumulano, continuano a crescere i consumi di spazio.".to_owned(),
             )
         }
         (false, _) => (
             "info",
-            "Non so chi ripulisce questi file (su questo computer non c'è logrotate). Se il programma ruota i file da sé, non serve altro.".to_owned(),
+            "Loglem conserva gli originali. Non è stato possibile stabilire se il programma li cancella.".to_owned(),
         ),
     };
 
@@ -288,9 +285,9 @@ pub fn analyse(f: &Facts) -> (Report, Vec<Note>) {
             text: format!(
                 "{} che Loglem non legge (per esempio «{}»).{pattern}{advice} Se il file ruota mentre Loglem è fermo, quelle righe si perdono.",
                 if f.unread.len() == 1 {
-                    "Accanto al log c'è 1 file ruotato".to_owned()
+                    "Accanto al log c'è un vecchio file".to_owned()
                 } else {
-                    format!("Accanto al log ci sono {} file ruotati", f.unread.len())
+                    format!("Accanto al log ci sono {} vecchi file", f.unread.len())
                 },
                 f.unread[0]
             ),
@@ -299,6 +296,7 @@ pub fn analyse(f: &Facts) -> (Report, Vec<Note>) {
 
     let report = Report {
         applies: true,
+        matching_files: None,
         loglem_on,
         system: f.system.clone(),
         level,
@@ -325,6 +323,7 @@ pub fn report(source: &Source, rotated: Option<bool>, handoff: Option<bool>) -> 
     let Some(path) = path else {
         return Report {
             applies: false,
+            matching_files: None,
             loglem_on: false,
             system: System {
                 kind: "none",
@@ -343,6 +342,7 @@ pub fn report(source: &Source, rotated: Option<bool>, handoff: Option<bool>) -> 
     let rules = Rules::load();
     let system = system_for(&source.input, rules.as_ref());
 
+    let mut matching_files = None;
     let (mut rotated_present, mut unread, mut suggested) = (false, Vec::new(), None);
     if let (false, Some(name)) = (
         is_folder,
@@ -350,7 +350,17 @@ pub fn report(source: &Source, rotated: Option<bool>, handoff: Option<bool>) -> 
     ) {
         let siblings = copies::visible_rotations(&path).unwrap_or_default();
         rotated_present = !siblings.is_empty();
-        let covered = file::candidates(&path, pattern.as_deref()).unwrap_or_default();
+        let candidates = file::candidates(&path, pattern.as_deref());
+        matching_files = candidates.as_ref().ok().map(|paths| {
+            paths
+                .iter()
+                .filter(|p| *p != &path)
+                .filter_map(|p| p.file_name())
+                .take(12)
+                .map(|n| n.to_string_lossy().into_owned())
+                .collect()
+        });
+        let covered = candidates.unwrap_or_default();
         let mut missing: Vec<String> = siblings
             .iter()
             .filter(|p| !covered.contains(p))
@@ -377,7 +387,9 @@ pub fn report(source: &Source, rotated: Option<bool>, handoff: Option<bool>) -> 
         unread,
         suggested,
     };
-    analyse(&facts).0
+    let mut report = analyse(&facts).0;
+    report.matching_files = matching_files;
+    report
 }
 
 /// Una frase per `loglem status` e per le schede: il quadro e gli avvisi.
@@ -470,7 +482,7 @@ mod tests {
         assert!(report.headline.starts_with("Li ripulisce Loglem"));
         assert!(notes
             .iter()
-            .any(|n| n.level == "warn" && n.text.contains("Nessuno ruota")));
+            .any(|n| n.level == "warn" && n.text.contains("sempre nello stesso file")));
     }
 
     #[test]

@@ -18,7 +18,20 @@ pub fn once(dir: &Path) -> Result<()> {
 
 fn cycle(dir: &Path) -> Result<()> {
     let _access = util::DataAccess::read(dir)?;
-    let config = config::load(dir)?;
+    let mut config = config::load(dir)?;
+    let now = crate::timestamps::now_ns() / 1_000_000_000;
+    let due = |s: &crate::model::Source| {
+        !s.enabled && !s.detached && s.resume_at.is_some_and(|t| t <= now)
+    };
+    if config.sources.iter().any(due) {
+        config = config::edit(dir, |cfg| {
+            for s in cfg.sources.iter_mut().filter(|s| due(s)) {
+                s.enabled = true;
+                s.resume_at = None;
+            }
+            Ok(cfg.clone())
+        })?;
+    }
     let mut failures = Vec::new();
     let mut journals = sources::journal::collect_shared(dir, &config.sources);
     for source in &config.sources {
@@ -64,6 +77,12 @@ fn collect_source(
     poll_seconds: u64,
     journal: Option<Result<usize>>,
 ) -> Result<()> {
+    // Older versions recorded successful cleanup only in the last collection message.
+    archive.db.execute(
+        "INSERT OR IGNORE INTO state(key,value) SELECT 'deleted_originals','1' FROM state
+         WHERE key='status' AND value GLOB '*; [1-9]* originali archiviati ed eliminati*'",
+        [],
+    )?;
     archive.set_state("source_definition", &serde_json::to_string(&source.input)?)?;
     let now = timestamps::now_ns();
     sources::retention::refresh(archive, source, now)?;
@@ -457,6 +476,11 @@ pub(crate) fn statuses_with_sites(dir: &Path) -> Result<SiteStatus> {
                 .and_then(crate::formats::saved)
                 .map(|f| f.label().to_owned());
             Ok(SourceStatus {
+                resume_at: source.resume_at,
+                deleted_originals: match &store {
+                    Some(db) => db.get_state("deleted_originals")?.is_some(),
+                    None => false,
+                },
                 program,
                 format,
                 journal_runtime: source.journal_runtime,

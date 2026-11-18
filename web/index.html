@@ -24,6 +24,21 @@
         <button type="submit" class="primary">Assegna</button> <button type="button" data-close>Chiudi</button>
       </form>
     </dialog>
+    <dialog id="pause-dialog" aria-labelledby="pause-title">
+      <form id="schedule-pause"><h2 id="pause-title">Metti in pausa la raccolta</h2>
+        <p id="pause-policy"></p><p>Il programma continuerà a scrivere. Se cancella degli originali prima della ripresa, quegli eventi potrebbero mancare nello storico.</p>
+        <label>Quando deve riprendere Loglem?
+          <select id="pause-duration"><option value="60">Tra un’ora</option><option value="1440">Tra un giorno</option><option value="10080">Tra una settimana</option><option value="">Quando premo Riprendi</option></select>
+        </label><button type="submit" class="primary">Conferma pausa</button> <button type="button" data-close>Annulla</button>
+      </form>
+    </dialog>
+    <dialog id="remove-dialog" aria-labelledby="remove-title">
+      <h2 id="remove-title">Elimina il log da Loglem</h2><p id="remove-summary"></p>
+      <p id="last-copy" class="cleanup-warning" hidden>Loglem ha già cancellato alcuni file originali dopo averli archiviati. Questo archivio potrebbe contenerne l’ultima copia.</p>
+      <p>Il backup include configurazione e archivi di Loglem. Lo troverai nella cartella <code>backups</code> dei dati di Loglem. La cancellazione parte solo dopo la verifica.</p>
+      <button id="remove-backup" type="button" class="primary">Crea e verifica un backup, poi elimina</button>
+      <button id="remove-direct" type="button" class="danger">Elimina senza backup</button> <button type="button" data-close>Annulla</button>
+    </dialog>
     <aside class="sidebar">
       <a class="brand" href="#sources">
         <span class="brand-icon">L</span>
@@ -443,58 +458,31 @@
             </div>
 
             <section id="cleanup-panel" class="cleanup-panel" hidden>
-              <h3>Pulizia dei file originali</h3>
-              <p class="muted">
-                I file originali sono quelli scritti dal tuo programma. Loglem tiene una copia per
-                conto suo: qui scegli chi cancella gli originali.
-              </p>
+              <h3>Chi cancella i vecchi file di log?</h3>
+              <p>Quando un programma apre un nuovo file, quello precedente può cambiare nome. Per esempio, <code>access.log.1</code> contiene i vecchi accessi e <code>access.log</code> riceve quelli nuovi.</p>
               <p id="cleanup-headline" class="cleanup-headline"></p>
+              <fieldset class="cleanup-options">
+                <legend>Cosa deve fare Loglem?</legend>
+                <label><input type="radio" name="cleanup-mode" value="keep"> Conserva i file originali. Scegli questa opzione se li cancella già il programma.</label>
+                <label id="rotated-choice"><input type="radio" name="cleanup-mode" value="rotated"> Cancella i vecchi file accanto al log dopo averne salvato e verificato una copia.</label>
+                <label><input type="radio" name="cleanup-mode" value="handoff"> Usa una cartella separata. Il programma ci mette i log che ha chiuso. Loglem li salva, li controlla e poi li cancella.</label>
+                <label id="legacy-choice" hidden><input type="radio" name="cleanup-mode" value="both"> Mantieni la scelta precedente: pulisci sia i vecchi file sia la cartella separata.</label>
+              </fieldset>
+              <div id="cleanup-settings" hidden>
+                <label for="completed-dir">Cartella che contiene solo i log chiusi</label>
+                <div class="row"><input id="completed-dir" class="grow" placeholder="/percorso/log-chiusi" />
+                  <button type="button" data-storage-for="completed-dir">Sfoglia…</button></div>
+                <label class="checkbox"><input id="handoff-confirmed" type="checkbox" /> Confermo che il programma ha smesso di scrivere in tutti i file di questa cartella.</label>
+              </div>
+              <details id="rotated-settings" hidden>
+                <summary>Avanzate · Come riconoscere i vecchi file</summary>
+                <label for="rotated-pattern">Nomi da cercare nella stessa cartella</label>
+                <div class="row"><input id="rotated-pattern" class="grow" placeholder="access.log.*" />
+                  <button type="button" id="use-suggested-pattern" hidden></button></div>
+                <small>L’asterisco indica la parte del nome che cambia.</small>
+                <p id="matched-files" aria-live="polite"></p>
+              </details>
               <ul id="cleanup-notes" class="cleanup-notes"></ul>
-
-              <div id="rotated-settings" class="cleanup-choice" hidden>
-                <label class="checkbox">
-                  <input id="remove-rotated" type="checkbox" />
-                  <span><strong>Loglem cancella i file ruotati</strong> dopo averli archiviati e controllati</span>
-                </label>
-                <div class="field">
-                  <label for="rotated-pattern">Nomi dei file ruotati</label>
-                  <div class="row">
-                    <input id="rotated-pattern" class="grow" placeholder="es. access.log.*" />
-                    <button type="button" id="use-suggested-pattern" hidden></button>
-                  </div>
-                  <small>
-                    Il programma o logrotate ruota il file e gli dà un nome nuovo (per esempio
-                    <code>access.log.1</code>). Scrivi qui come si chiamano, con * al posto di ciò
-                    che cambia. Deve iniziare con il nome del log.
-                  </small>
-                </div>
-              </div>
-
-              <div id="handoff-choice" class="cleanup-choice" hidden>
-                <div class="field">
-                  <label for="cleanup-mode">Il programma sposta i file finiti in una cartella a parte?</label>
-                  <select id="cleanup-mode">
-                    <option value="keep">No: Loglem legge soltanto, non cancella niente</option>
-                    <option value="handoff">Sì: Loglem archivia ed elimina i file di quella cartella</option>
-                  </select>
-                </div>
-                <div id="cleanup-settings" hidden>
-                  <label for="completed-dir">Cartella dove il programma mette i file finiti</label>
-                  <div class="row">
-                    <input id="completed-dir" class="grow" placeholder="/percorso/file-conclusi" />
-                    <button type="button" data-storage-for="completed-dir">Sfoglia…</button>
-                  </div>
-                  <small>
-                    Questa cartella la riempie il tuo programma, non Loglem: Loglem non sposta
-                    niente. Deve contenere solo file .log che il programma ha chiuso.
-                  </small>
-                  <label class="checkbox">
-                    <input id="handoff-confirmed" type="checkbox" />
-                    Confermo che questa cartella contiene solo file conclusi, separati dai file attivi.
-                  </label>
-                </div>
-              </div>
-
               <p id="cleanup-warning" class="cleanup-warning" role="alert" hidden></p>
             </section>
 
@@ -517,11 +505,10 @@
           </div>
 
           <div class="source-lifecycle">
-            <h3>Gestisci collegamento</h3>
+            <h3>Gestisci la raccolta</h3>
+            <p id="lifecycle-status"></p>
             <p class="muted">
-              <strong>Pausa</strong>: Loglem smette di leggere finché non premi «Riprendi».
-              <strong>Scollega</strong>: per un container o un file che non c'è più; resta solo lo
-              storico, che scade secondo la durata scelta. In entrambi i casi puoi tornare a leggere.
+              Puoi interrompere la lettura e riprenderla più avanti. Durante la pausa o dopo lo scollegamento, le righe già salvate continuano a scadere secondo la durata scelta.
             </p>
             <div class="row">
               <button id="pause-source" type="button">Metti in pausa</button>

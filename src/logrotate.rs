@@ -82,7 +82,7 @@ impl Rule {
     pub fn describe(&self) -> String {
         let mut parts = Vec::new();
         if let Some(every) = self.every {
-            parts.push(format!("ruota {}", every.text()));
+            parts.push(format!("apre un nuovo file {}", every.text()));
         }
         match self.keep {
             Some(0) => parts.push("non tiene copie vecchie".into()),
@@ -318,7 +318,7 @@ mod tests {
         assert_eq!(rule.days(), Some(14));
         assert_eq!(
             rule.describe(),
-            "ruota ogni giorno, tiene 14 copie, circa 14 giorni"
+            "apre un nuovo file ogni giorno, tiene 14 copie, circa 14 giorni"
         );
     }
 

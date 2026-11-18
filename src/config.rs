@@ -416,6 +416,7 @@ pub fn remove_site(dir: &Path, site: &str, with_logs: bool) -> Result<Vec<String
     edit(dir, |cfg| {
         for s in cfg.sources.iter_mut().filter(|s| s.site == id) {
             s.enabled = false;
+            s.resume_at = None;
         }
         Ok(())
     })?;

@@ -24,6 +24,8 @@ pub struct Source {
     pub completed_dir: Option<PathBuf>,
     #[serde(default)]
     pub detached: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_at: Option<i64>,
     /// Modalità prova: sigillo giornaliero con impronte concatenate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proof: Option<crate::proof::Proof>,
@@ -140,6 +142,7 @@ impl Default for Source {
             archive_dir: None,
             completed_dir: None,
             detached: false,
+            resume_at: None,
             remove_rotated: false,
             advice: Default::default(),
             privacy: Default::default(),
@@ -301,6 +304,8 @@ pub struct SearchRow {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SourceStatus {
+    pub resume_at: Option<i64>,
+    pub deleted_originals: bool,
     pub journal_runtime: Option<crate::sources::podman::Runtime>,
     pub class: Option<String>,
     pub site: String,

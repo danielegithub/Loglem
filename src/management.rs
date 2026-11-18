@@ -30,6 +30,7 @@ pub struct Change {
     #[serde(default)]
     pub handoff_confirmed: bool,
     pub enabled: Option<bool>,
+    pub pause_minutes: Option<u32>,
     pub detached: Option<bool>,
     pub remove_rotated: Option<bool>,
     /// Modello dei nomi dei file ruotati (es. `access.log.*`). Vuoto = nessuno.
@@ -41,7 +42,7 @@ pub struct Change {
 
 /// Un modello dei nomi dei file ruotati è sicuro solo se parte dal nome del log: così non
 /// può includere altri file della stessa cartella, che Loglem poi cancellerebbe.
-fn checked_pattern(active: &Path, pattern: &str) -> Result<Option<String>> {
+pub(crate) fn checked_pattern(active: &Path, pattern: &str) -> Result<Option<String>> {
     if pattern.is_empty() {
         return Ok(None);
     }
@@ -63,12 +64,26 @@ fn checked_pattern(active: &Path, pattern: &str) -> Result<Option<String>> {
 /// Elimina una sorgente con il suo storico. Solo se è in pausa o scollegata: una sorgente
 /// che sta ancora raccogliendo va prima fermata, altrimenti si perderebbero righe nuove.
 pub fn remove(dir: &Path, name: &str) -> Result<()> {
+    remove_with_backup(dir, name, false).map(|_| ())
+}
+
+pub fn remove_with_backup(dir: &Path, name: &str, backup: bool) -> Result<Option<PathBuf>> {
     let _access = util::DataAccess::write(dir)?;
     let _collector = util::Lock::acquire(&dir.join("collector.lock"))?;
     let source = config::source(dir, name)?;
     if source.enabled && !source.detached {
         bail!("Metti prima in pausa o scollega la sorgente, poi potrai eliminarla");
     }
+    let target = if backup {
+        let target = dir
+            .join("backups")
+            .join(format!("{name}-{}", crate::timestamps::now_ns()));
+        crate::backup::create_locked(dir, &target, false)?;
+        crate::backup::verify(&target)?;
+        Some(target)
+    } else {
+        None
+    };
     let archive = source.archive_path(dir);
     let mut files = vec![
         archive.clone(),
@@ -85,7 +100,7 @@ pub fn remove(dir: &Path, name: &str) -> Result<()> {
     }
     config::edit(dir, |config| {
         config.sources.retain(|s| s.id != name);
-        Ok(())
+        Ok(target)
     })
 }
 
@@ -123,13 +138,23 @@ pub fn apply(dir: &Path, change: Change) -> Result<Source> {
     }
     if let Some(enabled) = change.enabled {
         source.enabled = enabled;
+        source.resume_at = None;
         if enabled {
             source.detached = false;
         }
     }
     if let Some(detached) = change.detached {
         source.detached = detached;
+        source.resume_at = None;
         source.enabled = !detached;
+    }
+    if let Some(minutes) = change.pause_minutes {
+        anyhow::ensure!(
+            change.enabled == Some(false) && !source.detached && (1..=43200).contains(&minutes),
+            "Durata della pausa non valida"
+        );
+        source.resume_at =
+            Some(crate::timestamps::now_ns() / 1_000_000_000 + i64::from(minutes) * 60);
     }
     if let Some(path) = change.path.filter(|p| !is_current_path(&source.input, p)) {
         let path = fs::canonicalize(path).context("La posizione della sorgente non esiste")?;
@@ -239,6 +264,15 @@ pub fn apply(dir: &Path, change: Change) -> Result<Source> {
     config::validate(&candidate)?;
     let old_path = old.archive_path(dir);
     let new_path = source.archive_path(dir);
+    if source.remove_rotated {
+        if let Input::File {
+            path,
+            rotated_pattern: Some(pattern),
+        } = &source.input
+        {
+            checked_pattern(path, pattern)?;
+        }
+    }
     if let Some(completed) = &source.completed_dir {
         if new_path.parent().is_some_and(|p| completed == p) {
             bail!("I file conclusi devono essere separati dall'archivio SQLite");
@@ -259,10 +293,16 @@ pub fn apply(dir: &Path, change: Change) -> Result<Source> {
         relocate(&old_path, &new_path)?;
     }
     if let Err(error) = config::edit(dir, |c| {
-        *c.sources
+        let current = c
+            .sources
             .iter_mut()
             .find(|s| s.id == source.id)
-            .context("Sorgente non trovata")? = source.clone();
+            .context("Sorgente non trovata")?;
+        anyhow::ensure!(
+            serde_json::to_value(&*current)? == serde_json::to_value(&old)?,
+            "Le impostazioni sono cambiate durante il salvataggio. Riapri il log e riprova."
+        );
+        *current = source.clone();
         Ok(())
     }) {
         if relocated {
@@ -431,6 +471,7 @@ fn remove_compressed(store: &mut Archive, file: &Path) -> Result<()> {
         bail!("il contenuto non risulta archiviato; originale conservato");
     }
     fs::remove_file(file)?;
+    store.set_state("deleted_originals", "1")?;
     util::sync_dir(file.parent().context("Cartella mancante")?)?;
     Ok(())
 }
@@ -667,6 +708,82 @@ pub fn file_source(id: String, log: &Path, retention: Retention) -> Result<Sourc
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timed_pause_survives_reopen_and_resumes_only_when_due() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let dir = temp.path().join("data");
+        let file = temp.path().join("service.log");
+        fs::write(&file, "one event\n")?;
+        config::add(
+            &dir,
+            file_source("service".into(), &file, Retention::days(28))?,
+        )?;
+        let change = || Change {
+            name: "service".into(),
+            enabled: Some(false),
+            pause_minutes: Some(60),
+            ..Default::default()
+        };
+        apply(&dir, change())?;
+        crate::collector::once(&dir)?;
+        let paused = config::source(&dir, "service")?;
+        assert!(!paused.enabled && paused.resume_at.is_some());
+        config::edit(&dir, |cfg| {
+            cfg.sources[0].resume_at = Some(1);
+            Ok(())
+        })?;
+        crate::collector::once(&dir)?;
+        let resumed = config::source(&dir, "service")?;
+        assert!(resumed.enabled && resumed.resume_at.is_none());
+        assert_eq!(Archive::open(&resumed.archive_path(&dir))?.stats()?.0, 1);
+        apply(&dir, change())?;
+        apply(
+            &dir,
+            Change {
+                name: "service".into(),
+                detached: Some(true),
+                ..Default::default()
+            },
+        )?;
+        assert!(config::source(&dir, "service")?.resume_at.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn failed_backup_preserves_source_and_successful_removal_keeps_verified_snapshot() -> Result<()>
+    {
+        let temp = tempfile::tempdir()?;
+        let dir = temp.path().join("data");
+        let file = temp.path().join("access.log");
+        fs::write(&file, "event\n")?;
+        let s = file_source("access".into(), &file, Retention::days(28))?;
+        config::add(&dir, s.clone())?;
+        crate::collector::once(&dir)?;
+        apply(
+            &dir,
+            Change {
+                name: s.id.clone(),
+                enabled: Some(false),
+                ..Default::default()
+            },
+        )?;
+        fs::write(dir.join("backups"), "occupied")?;
+        assert!(remove_with_backup(&dir, &s.id, true).is_err());
+        assert!(config::source(&dir, &s.id)?.archive_path(&dir).is_file());
+        fs::remove_file(dir.join("backups"))?;
+        let snapshot = remove_with_backup(&dir, &s.id, true)?.unwrap();
+        crate::backup::verify(&snapshot)?;
+        assert!(!s.archive_path(&dir).exists() && config::load(&dir)?.sources.is_empty());
+        assert_eq!(
+            Archive::open_reader(&snapshot.join("archives/access.db"))?
+                .stats()?
+                .0,
+            1
+        );
+        assert_eq!(fs::read_to_string(file)?, "event\n");
+        Ok(())
+    }
 
     #[test]
     fn rotated_logs_are_collected_without_enabling_cleanup() -> Result<()> {

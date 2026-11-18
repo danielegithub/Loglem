@@ -38,6 +38,12 @@ pub fn create(dir: &Path, target: &Path) -> Result<String> {
 }
 
 pub(crate) fn create_selected(dir: &Path, target: &Path, classes_only: bool) -> Result<String> {
+    let _access = util::DataAccess::write(dir)?;
+    create_locked(dir, target, classes_only)
+}
+
+/// Caller holds the exclusive data lock through snapshot publication.
+pub(crate) fn create_locked(dir: &Path, target: &Path, classes_only: bool) -> Result<String> {
     if target.exists() && fs::read_dir(target)?.next().is_some() {
         bail!(
             "{} non è vuota: scegli una cartella nuova",
@@ -61,7 +67,6 @@ pub(crate) fn create_selected(dir: &Path, target: &Path, classes_only: bool) -> 
 
 fn write_snapshot(dir: &Path, target: &Path, classes_only: bool) -> Result<String> {
     // Blocca le scritture durante la copia coordinata di SQLite, catena e marche.
-    let _access = util::DataAccess::write(dir)?;
     let _config_lock = util::Lock::acquire(&dir.join("config.lock"))?;
     let mut cfg = config::load_locked(dir, &_config_lock)?;
     if classes_only {

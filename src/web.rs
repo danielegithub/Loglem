@@ -1020,7 +1020,16 @@ fn api(route: &str, app: &App, body: Value) -> Result<Value> {
             route == "/api/site-duplicates"
         )?)),
         "/api/cleanup" => {
-            let source = config::source(dir, text(&body, "name")?)?;
+            let mut source = config::source(dir, text(&body, "name")?)?;
+            if let crate::model::Input::File {
+                path,
+                rotated_pattern,
+            } = &mut source.input
+            {
+                if let Some(pattern) = body.get("pattern").and_then(Value::as_str) {
+                    *rotated_pattern = crate::management::checked_pattern(path, pattern)?;
+                }
+            }
             let flag = |key: &str| body.get(key).and_then(Value::as_bool);
             Ok(json!(crate::cleanup::report(
                 &source,
@@ -1204,9 +1213,13 @@ fn api(route: &str, app: &App, body: Value) -> Result<Value> {
         }
         "/api/source-remove" => {
             let name = text(&body, "name")?.to_owned();
-            crate::management::remove(dir, &name)?;
+            let backup = crate::management::remove_with_backup(
+                dir,
+                &name,
+                body.get("backup").and_then(Value::as_bool).unwrap_or(false),
+            )?;
             app.worker.request();
-            Ok(json!({"message":"Sorgente e storico eliminati."}))
+            Ok(json!({"message":"Sorgente e storico eliminati.", "backup":backup}))
         }
         "/api/retention" => {
             let name = text(&body, "name")?.to_owned();

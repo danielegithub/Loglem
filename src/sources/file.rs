@@ -342,6 +342,7 @@ pub fn archive_completed(
     }
     if remove {
         fs::remove_file(completed)?;
+        store.set_state("deleted_originals", "1")?;
         util::sync_dir(completed.parent().context("Missing parent")?)?;
     }
     Ok(count)

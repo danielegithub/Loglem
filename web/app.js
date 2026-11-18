@@ -162,8 +162,9 @@ function sourceError(source) {
 // Restituisce [testo, classe CSS] per il badge di una sorgente.
 function sourceBadge(source) {
   if(source.detached)return ['Scollegata · storico disponibile','waiting'];
+
+  if (!source.enabled) return [source.resume_at ? 'In pausa fino al ' + new Date(source.resume_at * 1000).toLocaleString('it-IT') : 'In pausa', 'waiting'];
   if (sourceError(source)) return ['Errore di lettura', 'error'];
-  if (!source.enabled) return ['In pausa', 'waiting'];
   if (source.phase === 'collecting') return ['Lettura in corso', 'waiting'];
   if (!source.last_collection) return ['Prima lettura…', 'waiting'];
   return ['Collegata', ''];
@@ -549,6 +550,16 @@ async function readStatus(poll = false) {
     syncSourceSelect();
     renderProblems(state.problems || []);
     renderLive();
+    if (view === 'settings' && settingsSource) {
+      const current = state.sources.find(s => s.source === settingsSource.source);
+      if (current) {
+        // Refresh lifecycle actions without replacing the user's draft form values.
+        for (const key of ['enabled','detached','resume_at','deleted_originals','gaps']) settingsSource[key] = current[key];
+        updateLifecycle(settingsSource);
+      } else {
+        route();
+      }
+    }
     if (view === 'sources') renderSources();
     if (view === 'site') renderSite(location.hash.split('/')[1]);
     if (view === 'logs') {
@@ -1433,23 +1444,32 @@ function populateSettings() {
   showContainerAdvice(s);
   $('settings-source-path').value = s.input.path || '';
   $('cleanup-panel').hidden = !hasFiles;
-  $('rotated-settings').hidden = s.input.kind !== 'file';
-  $('handoff-choice').hidden = !hasFiles;
+  $('rotated-settings').hidden = $('rotated-choice').hidden = s.input.kind !== 'file';
+  $('legacy-choice').hidden = !(s.remove_rotated && s.completed_dir);
   $('rotated-pattern').value = s.input.rotated_pattern || '';
-  $('remove-rotated').checked = s.remove_rotated;
-  $('cleanup-mode').value = s.completed_dir ? 'handoff' : 'keep';
+  $('rotated-pattern').dataset.edited = '';
+  const mode = s.completed_dir ? (s.remove_rotated ? 'both' : 'handoff') : (s.remove_rotated ? 'rotated' : 'keep');
+  document.querySelector('input[name=cleanup-mode][value=' + mode + ']').checked = true;
   $('completed-dir').value = s.completed_dir || '';
   $('handoff-confirmed').checked = false;
   $('cleanup-settings').hidden = !s.completed_dir;
   if (hasFiles) refreshCleanup();
 
+  updateLifecycle(s);
+  $('replacement-container').replaceChildren(new Option('Carica prima l’elenco', ''));
+  $('reconnect-connection').value = '';
+  loadAdvice(s.source, $('settings-advice'), false);
+}
+
+function updateLifecycle(s) {
+  $('lifecycle-status').textContent = 'Stato · ' + sourceBadge(s)[0];
   const paused = !s.enabled || s.detached;
   $('pause-source').textContent = paused ? 'Riprendi la raccolta' : 'Metti in pausa';
   $('detach-source').disabled = s.detached;
   $('remove-source').disabled = !paused;
-  $('replacement-container').replaceChildren(new Option('Carica prima l’elenco', ''));
-  $('reconnect-connection').value = '';
-  loadAdvice(s.source, $('settings-advice'), false);
+  $('last-copy').hidden = !s.deleted_originals;
+  $('settings-gaps').replaceChildren(...s.gaps.slice(0, 3).map(g =>
+    element('p', 'Potrebbero mancare eventi dal ' + formatDate(g.from) + ' al ' + formatDate(g.to) + '. ' + g.reason, 'card-warning')));
 }
 
 // Per i container: dove il runtime tiene i log e come limitarli.
@@ -1487,13 +1507,14 @@ function settingsChange() {
   if (path && path !== s.input.path) change.path = path;
   if (s.input.kind === 'file') {
     const pattern = $('rotated-pattern').value.trim();
-    if ($('remove-rotated').checked && !pattern) {
-      throw new Error('Per far cancellare i file ruotati a Loglem scrivi prima come si chiamano («Nomi dei file ruotati»).');
+    if (cleanRotated() && !pattern) {
+      throw new Error('Apri Avanzate e indica come riconoscere i vecchi file.');
     }
-    if (pattern !== (s.input.rotated_pattern || '')) change.rotated_pattern = pattern;
-    change.remove_rotated = $('remove-rotated').checked && pattern !== '';
+    const usePattern = s.input.rotated_pattern || cleanRotated() || $('rotated-pattern').dataset.edited;
+    if (usePattern && pattern !== (s.input.rotated_pattern || '')) change.rotated_pattern = pattern;
+    change.remove_rotated = cleanRotated() && pattern !== '';
   }
-  const handoff = $('cleanup-mode').value === 'handoff';
+  const handoff = cleanFolder();
   change.completed_dir = handoff ? requiredFolder('completed-dir') : '';
   change.handoff_confirmed = $('handoff-confirmed').checked;
   return change;
@@ -1514,87 +1535,114 @@ $('retention-form').addEventListener('submit', (event) => {
     const warning = cleanupTurnedOn(change);
     if (warning && !confirm(warning)) return;
     await api('source-settings', change);
-    await refresh();
-    location.hash = '#sources';
-    showNotice('Impostazioni salvate. La conservazione sarà applicata automaticamente.');
+    await refresh(true);
+    goToSources('Impostazioni salvate.');
   });
 });
 
 $('settings-storage').addEventListener('change', () => updateStorage('settings'));
-$('cleanup-mode').addEventListener('change', () => {
-  $('cleanup-settings').hidden = $('cleanup-mode').value !== 'handoff';
-  refreshCleanup();
-});
-$('remove-rotated').addEventListener('change', refreshCleanup);
-$('use-suggested-pattern').addEventListener('click', () => {
-  $('rotated-pattern').value = $('use-suggested-pattern').dataset.pattern;
-  $('use-suggested-pattern').hidden = true;
-});
-
-// Cosa succede se si salva: scritto prima, con parole semplici, perché cancellare non si annulla.
-function cleanupWarningText(rotated, handoff) {
-  const s = settingsSource;
-  const keep = periodText(readPeriod('retention-days', 'retention-unit'));
-  const parts = [];
-  if (rotated) {
-    const name = (s.input.path || '').split('/').pop();
-    parts.push('ogni file ruotato di «' + name + '» (nomi come «' + $('rotated-pattern').value.trim() + '»)');
-  }
-  if (handoff) parts.push('ogni file .log nella cartella «' + $('completed-dir').value.trim() + '»');
-  return 'Attenzione: da ora Loglem cancellerà ' + parts.join(' e ') +
-    ' dopo averlo archiviato, controllato riga per riga e dopo 24 ore senza modifiche. ' +
-    'Il file su cui il programma scrive non viene toccato. La cancellazione non si annulla: ' +
-    'resta solo la copia di Loglem, per ' + keep + '.';
+const cleanupMode = () => document.querySelector('input[name=cleanup-mode]:checked')?.value;
+const cleanRotated = () => ['rotated', 'both'].includes(cleanupMode());
+const cleanFolder = () => ['handoff', 'both'].includes(cleanupMode());
+let cleanupTimer;
+for (const option of document.querySelectorAll('input[name=cleanup-mode]')) {
+  option.onchange = () => {
+    $('cleanup-settings').hidden = !cleanFolder();
+    refreshCleanup();
+  };
 }
-
-// Vero solo se la pulizia viene accesa adesso (non se era già accesa): serve la conferma.
+$('rotated-pattern').oninput = () => {
+  $('rotated-pattern').dataset.edited = 'yes';
+  clearTimeout(cleanupTimer);
+  cleanupTimer = setTimeout(refreshCleanup, 250);
+};
+$('use-suggested-pattern').onclick = () => {
+  $('rotated-pattern').value = $('use-suggested-pattern').dataset.pattern;
+  $('rotated-pattern').oninput();
+};
+for (const id of ['completed-dir','retention-days','retention-unit']) $(id).addEventListener('input', updateCleanupWarning);
+function cleanupWarningText(rotated, handoff) {
+  const parts = [];
+  if (rotated) parts.push('i vecchi file accanto a ' + ($('settings-source-path').value || settingsSource.input.path).split('/').pop());
+  const folder = $('completed-dir').value.trim();
+  if (handoff && !folder) return 'Scegli la cartella dei log chiusi prima di salvare.';
+  if (handoff) parts.push('i file .log in «' + folder + '»');
+  const period = {amount: Number($('retention-days').value), unit: $('retention-unit').value};
+  return 'Salvando questa scelta, Loglem potrà cancellare ' + parts.join(' e ') +
+    ' dopo aver verificato la copia e atteso 24 ore dall’ultima modifica. Il file in uso resta al suo posto.' +
+    (period.amount > 0 ? ' La copia in Loglem scade dopo ' + periodText(period) + '.' : '');
+}
 function cleanupTurnedOn(change) {
-  const s = settingsSource;
-  const rotated = change.remove_rotated === true && !s.remove_rotated;
-  const handoff = Boolean(change.completed_dir) && change.completed_dir !== (s.completed_dir || '');
+  const rotated = change.remove_rotated && (!settingsSource.remove_rotated || change.rotated_pattern !== undefined || change.path);
+  const handoff = change.completed_dir && change.completed_dir !== settingsSource.completed_dir;
   return rotated || handoff ? cleanupWarningText(rotated, handoff) : '';
 }
-
+function updateCleanupWarning() {
+  const warning = $('cleanup-warning');
+  warning.hidden = !(cleanRotated() || cleanFolder());
+  if (!warning.hidden) warning.textContent = cleanupWarningText(cleanRotated(), cleanFolder());
+}
 let cleanupRequest = 0;
-// Il riquadro «Pulizia dei file originali» segue le scelte fatte nel modulo, anche prima di salvare.
 async function refreshCleanup() {
   const s = settingsSource;
-  if (!s || (s.input.kind !== 'file' && s.input.kind !== 'folder')) return;
+  if (!s || !['file','folder'].includes(s.input.kind)) return;
   const request = ++cleanupRequest;
-  const rotated = s.input.kind === 'file' && $('remove-rotated').checked;
-  const handoff = $('cleanup-mode').value === 'handoff';
-  const headline = $('cleanup-headline');
+  updateCleanupWarning();
+  const field = $('rotated-pattern');
+  const body = {name:s.source, rotated:cleanRotated(), handoff:cleanFolder()};
+  if (s.input.kind === 'file' && (field.value || field.dataset.edited)) body.pattern = field.value.trim();
   try {
-    const r = await api('cleanup', { name: s.source, rotated, handoff });
-    if (request !== cleanupRequest) return;
-    headline.textContent = r.headline;
-    headline.className = 'cleanup-headline cleanup-' + r.level;
-    $('cleanup-notes').replaceChildren(
-      ...r.notes.map((n) => element('li', n.text, 'cleanup-' + n.level)),
-    );
-    const button = $('use-suggested-pattern');
-    const current = $('rotated-pattern').value.trim();
-    button.hidden = !r.suggested_pattern || r.suggested_pattern === current;
-    if (!button.hidden) {
-      button.dataset.pattern = r.suggested_pattern;
-      button.textContent = 'Usa «' + r.suggested_pattern + '»';
+    const r = await api('cleanup', body);
+    if (s !== settingsSource || request !== cleanupRequest) return;
+    const other = ['logrotate','program'].includes(r.system.kind);
+    $('cleanup-headline').textContent = 'Oggi Loglem ' + (s.remove_rotated || s.completed_dir ? 'può cancellare i vecchi file.' : 'conserva gli originali.') +
+      (other ? ' Gestione del programma: ' + r.system.text + '.' : ' La durata degli originali è sconosciuta.');
+    $('cleanup-notes').replaceChildren(...r.notes.filter(n => n.level === 'warn').map(n => element('li', n.text, 'cleanup-warn')));
+    if (s.input.kind !== 'file') return;
+    if (!field.value && !field.dataset.edited) {
+      field.value = r.suggested_pattern || s.input.path.split('/').pop() + '.*';
+      return refreshCleanup();
     }
-    const warning = $('cleanup-warning');
-    warning.hidden = !(rotated || handoff);
-    if (!warning.hidden) warning.textContent = cleanupWarningText(rotated, handoff);
+    const button = $('use-suggested-pattern');
+    button.hidden = !r.suggested_pattern || r.suggested_pattern === field.value;
+    button.dataset.pattern = r.suggested_pattern || '';
+    button.textContent = 'Usa ' + r.suggested_pattern;
+    $('matched-files').textContent = r.matching_files === null ? 'Impossibile leggere la cartella.' :
+      r.matching_files.length ? 'File trovati (fino a 12): ' + r.matching_files.join(', ') : 'Nessun vecchio file corrisponde al nome indicato.';
   } catch (error) {
-    if (request === cleanupRequest) headline.textContent = error.message;
+    if (s === settingsSource && request === cleanupRequest) $('matched-files').textContent = error.message;
   }
 }
-
-$('pause-source').addEventListener('click', () =>
-  perform($('pause-source'), async () => {
-    const resume = !settingsSource.enabled || settingsSource.detached;
-    await api('source-settings', { name: settingsSource.source, enabled: resume });
+$('pause-source').onclick = () => perform($('pause-source'), async () => {
+  const s = settingsSource;
+  if (s.enabled && !s.detached) {
+    $('schedule-pause').dataset.source = s.source;
+    $('pause-duration').value = '60';
+    $('pause-policy').textContent = 'Durata degli originali sconosciuta. Il recupero dipende dai log ancora disponibili.';
+    $('pause-dialog').showModal();
+    if (['folder','file'].includes(s.input.kind)) {
+      const r = await api('cleanup', {name:s.source});
+      if (s === settingsSource && r.system.days) $('pause-policy').textContent = 'Durata stimata degli originali: circa ' + r.system.days + ' giorni.';
+    } else {
+      const policy = await api('original-retention', {name:s.source});
+      if (s === settingsSource) $('pause-policy').textContent = policy;
+    }
+    return;
+  }
+  await api('source-settings', {name:s.source, enabled:true});
+  await refresh();
+  location.hash = '#sources';
+});
+$('schedule-pause').onsubmit = event => {
+  event.preventDefault();
+  perform(event.submitter, async () => {
+    const minutes = Number($('pause-duration').value);
+    await api('source-settings', {name:$('schedule-pause').dataset.source, enabled:false, pause_minutes:minutes || null});
+    $('pause-dialog').close();
     await refresh();
     location.hash = '#sources';
-  }),
-);
+  });
+};
 
 $('detach-source').addEventListener('click', () =>
   perform($('detach-source'), async () => {
@@ -1608,19 +1656,26 @@ $('detach-source').addEventListener('click', () =>
   }),
 );
 
-$('remove-source').addEventListener('click', () =>
-  perform($('remove-source'), async () => {
-    const name = settingsSource.source;
-    const question =
-      'Eliminare la sorgente «' + name + '» e tutto il suo storico? ' +
-      'Le righe archiviate saranno cancellate e non si possono recuperare. ' +
-      'I file originali non vengono toccati.';
-    if (!confirm(question)) return;
-    await api('source-remove', { name });
-    await refresh();
-    location.hash = '#sources';
-  }),
-);
+$('remove-source').onclick = () => {
+  $('remove-summary').textContent = 'Stai per eliminare «' + settingsSource.label + '» e il suo storico da Loglem. Gli originali ancora presenti restano al loro posto.';
+  $('last-copy').hidden = !settingsSource.deleted_originals;
+  $('remove-dialog').showModal();
+};
+for (const id of ['remove-backup','remove-direct']) $(id).onclick = () => perform($(id), async () => {
+  const backup = id === 'remove-backup';
+  if (!backup && !confirm('Eliminare definitivamente questo storico senza creare un backup?')) return;
+  const dialog = $('remove-dialog');
+  const controls = [...dialog.querySelectorAll('button')];
+  controls.forEach(b => b.disabled = true);
+  try {
+    const result = await api('source-remove', {name:settingsSource.source, backup});
+    dialog.close();
+    await refresh(true);
+    goToSources(result.backup ? 'Storico eliminato. Backup verificato in ' + result.backup : result.message);
+  } finally {
+    controls.forEach(b => b.disabled = sessionLocked);
+  }
+});
 
 $('load-replacements').addEventListener('click', () =>
   perform($('load-replacements'), async () => {

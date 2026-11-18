@@ -73,7 +73,16 @@ impl Worker {
                     }));
                 }
                 let seconds = crate::config::load(&dir)
-                    .map(|c| c.poll_seconds)
+                    .map(|c| {
+                        let now = crate::timestamps::now_ns() / 1_000_000_000;
+                        c.sources
+                            .iter()
+                            .filter(|s| !s.enabled && !s.detached)
+                            .filter_map(|s| s.resume_at)
+                            .fold(c.poll_seconds, |wait, t| {
+                                wait.min(t.saturating_sub(now).max(1) as u64)
+                            })
+                    })
                     .unwrap_or(5);
                 let mut state = mutex.lock().unwrap_or_else(|p| p.into_inner());
                 state.running = false;
