@@ -1473,3 +1473,14 @@ dialog button, dialog select { margin: .35rem .2rem .35rem 0; }
 .site-log-list li { margin: .45rem 0; }
 .site-log-list button { margin-left: .65rem; }
 .session-locked button[type=submit] { visibility: hidden; }
+
+.source-rule-card { padding: 1rem 0; min-width: 0; }
+.source-rule-card + .source-rule-card { border-top: 1px solid var(--border); }
+.source-rule-card h3, .source-rule-card p { margin: 0 0 .35rem; overflow-wrap: anywhere; }
+.source-rule-card dl { margin: .85rem 0; }
+.rule-summary { display: grid; gap: .75rem 1.5rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); }
+.source-rule-card dt { color: var(--muted); font-size: .9rem; }
+.source-rule-card dd { margin: .15rem 0 0; }
+.source-rule-card summary { cursor: pointer; }
+.rule-details > div { margin: .8rem 0; }
+.rule-details code { white-space: normal; overflow-wrap: anywhere; }

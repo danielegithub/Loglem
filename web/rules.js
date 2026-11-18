@@ -44,6 +44,49 @@ async function saveRule(values) {
   showNotice('Impostazioni salvate.');
 }
 
+function ruleFact(list, label, value) {
+  const group = element('div');
+  const description = element('dd');
+  description.append(value);
+  group.append(element('dt', label), description);
+  list.append(group);
+}
+
+function sourceRuleCard(source, backup) {
+  const rule = policyState.rules.classes[source.class];
+  const card = element('article', undefined, 'source-rule-card');
+  const name = element('h3');
+  name.append(link(source.label || source.source, '#settings/' + source.source, 'text-link'));
+  const group = state.sites[source.site]?.name || 'Log da sistemare';
+  card.append(name, element('p', group + ' · ' + (source.class || 'Regola individuale'), 'muted'));
+
+  const summary = element('dl', undefined, 'rule-summary');
+  ruleFact(summary, 'Conservazione', periodText(sourcePeriod(source)));
+  ruleFact(summary, 'Prima riga archiviata', source.earliest ? formatDate(source.earliest) : 'Nessuna riga');
+  ruleFact(summary, 'Spazio archivio', formatSize(source.archive_bytes));
+  card.append(summary);
+
+  const details = element('details');
+  details.append(element('summary', 'Percorsi e dettagli della regola'));
+  const facts = element('dl', undefined, 'rule-details');
+  ruleFact(facts, 'Origine del log', element('code', source.origin));
+  ruleFact(facts, 'Archivio di Loglem', element('code', source.archive));
+  if (rule?.reason) ruleFact(facts, 'Motivo della conservazione', rule.reason);
+  if (rule?.max_mb) ruleFact(facts, 'Quota della classe', rule.max_mb + ' MiB');
+  ruleFact(facts, 'Cifratura archivio', 'SQLite in chiaro');
+  ruleFact(facts, 'Modalità prova', source.proof ? (source.proof.tsa ? 'Sigillo e marca temporale configurata' : 'Sigillo giornaliero') : 'Disattivata');
+  ruleFact(facts, 'Backup', backup && (!backup.classes_only || rule?.backup) ? 'OpenPGP · ogni ' + backup.hours + ' ore' : 'Non programmato');
+  details.append(facts);
+  details.addEventListener('toggle', () => {
+    if (details.open && !facts.dataset.originals) {
+      ruleFact(facts, 'Gestione degli originali', originalRetentionNote(source.input, source));
+      facts.dataset.originals = 'loaded';
+    }
+  });
+  card.append(details);
+  return card;
+}
+
 async function loadRulesPage() {
   policyState = await api('rules');
   const sources = state.sources.map((s) => [s.source, s.label || s.source]);
@@ -67,46 +110,8 @@ async function loadRulesPage() {
   populateClass();
   populateAssignment();
   populateProof();
-  const cells = state.sources.map((s) => {
-    const rule = policyState.rules.classes[s.class];
-    const remote = config && (!config.classes_only || rule?.backup);
-    const history = s.earliest
-      ? Math.max(0, Math.floor((Date.now() - Date.parse(s.earliest)) / 86400000)) +
-        ' giorni dal primo log'
-      : 'Nessuna riga';
-    return [
-      s.label || s.source,
-      s.origin + ' · ' + s.archive,
-      state.sites[s.site]?.name || 'Log da sistemare',
-      s.class || 'Individuale',
-      rule?.reason || '—',
-      periodText(sourcePeriod(s)),
-      history,
-      formatSize(s.archive_bytes) + (rule?.max_mb ? ' · quota classe ' + rule.max_mb + ' MiB' : ''),
-      'SQLite in chiaro',
-      s.proof ? (s.proof.tsa ? 'Sigillo + TSA configurata' : 'Sigillo giornaliero') : 'Disattivato',
-      remote ? 'OpenPGP · ogni ' + config.hours + ' ore' : 'Non programmato',
-      originalRetentionNote(s.input, s),
-    ];
-  });
-  tabulate(
-    'rules-table',
-    [
-      'Sorgente',
-      'Origine e archivio',
-      'Sito',
-      'Classe',
-      'Perché',
-      'Durata copie',
-      'Storico attuale',
-      'Spazio',
-      'Cifratura archivio',
-      'Modalità prova',
-      'Backup',
-      'Originali',
-    ],
-    cells,
-  );
+  const cards = state.sources.map(source => sourceRuleCard(source, config));
+  $('source-rules').replaceChildren(...(cards.length ? cards : [element('p', 'Nessun log configurato.')]));
   $('alert-list').replaceChildren(
     ...policyState.alerts.map((r) => {
       const line = element('p');
