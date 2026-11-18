@@ -6,10 +6,13 @@
 
 | Comando | Cosa fa |
 |---|---|
-| `source add-folder / add-file / add-caddy / add-podman / add-docker / add-kubernetes / add-journal` | Aggiunge una sorgente. |
+| `site add example.com`, `site list`, `site show example.com` | Crea un sito, elenca i siti o mostra un sito con i suoi log. |
+| `site copies example.com`, `site duplicates example.com [--external]` | Conta le posizioni degli originali e degli archivi. Confronta le righe recenti, anche nei file, nel journal e nei container locali con `--external`. |
+| `source add-folder / add-file / add-podman / add-docker / add-kubernetes / add-journal` | Aggiunge una sorgente. |
 | `source list`, `source set NOME --days N` | Elenca le sorgenti, cambia la durata. |
 | `source configure NOME …` | Nome, cartella dei file finiti, pulizia dei ruotati, percorso. |
-| `discover` | Cerca i log di Caddy, Nginx e Apache. |
+| `discover` | Cerca i log nella configurazione dei programmi conosciuti (`src/recipes/`). |
+| `add`, `site rename / remove` | Aggiunta guidata (cosa, chi, dove, riepilogo); rinomina o elimina un sito. |
 | `podman-list`, `docker-list`, `kubernetes-list` | Elenca container o pod. |
 | `collect` | Legge una volta. |
 | `serve` / `web` | Legge sempre e serve la pagina web. |
@@ -28,7 +31,7 @@
 
 | Comando | Cosa fa |
 |---|---|
-| `alerts list / add-pattern / add-size / add-free-space / remove / command / seen` | Regole di allarme e notifica. |
+| `alerts list / add-pattern / add-size / add-free-space / remove / command / seen / monitor / email-set / email-test / email-off / email-show` | Regole di allarme e notifica. |
 | `backup DIR`, `backup-verify DIR`, `restore DIR [--replace]` | Copia, controlla e ripristina i dati. |
 | `proof enable / disable / verify` | Modalità prova: sigilla ogni giorno. |
 | `privacy set SORGENTE …`, `privacy report` | Maschera gli IP, tieni campi JSON, elenca cosa conservi. |
@@ -40,7 +43,7 @@
 
 | Comando | Cosa fa |
 |---|---|
-| `service install [--start] / start / stop / status` | Servizio: systemd su Linux, launchd su macOS. |
+| `service install [--start] / uninstall / start / stop / status` | Servizio: systemd su Linux, launchd su macOS. |
 | `access user-add / user-remove / user-list / address / proxy` | Altri computer: utenti, indirizzo, reverse proxy. |
 | `config export / import / poll / web-port` | Impostazioni. |
 | `update check / install / status / configure` | Aggiornamenti firmati (Linux). |

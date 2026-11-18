@@ -25,7 +25,7 @@ Los registros se acumulan en muchos sitios. Nadie recuerda dónde están, cuánt
 - **Lo ves todo.** Una lista: cada fuente, dónde está, su tamaño, su estado.
 - **Eliges cuánto tiempo.** 28 días, 6 meses, 2 años, por fuente. Las copias viejas desaparecen solas.
 - **Puedes buscar.** Texto, fechas, IP, ruta, código de respuesta. También después de rotar el archivo o quitar el contenedor. Las líneas nuevas aparecen en directo.
-- **Es pequeño.** Un programa de unos 5 MB. Unos 8 MB de RAM en reposo (medidos en Linux). Sin servidor de base de datos, sin cuenta, sin nube. Tus registros se quedan en tu máquina.
+- **Es pequeño.** Un programa de unos 4 MB. Unos 5 MB de RAM (medidos en Linux). El archivo ocupa cerca de una décima parte de los registros originales. Sin servidor de base de datos, sin cuenta, sin nube. Tus registros se quedan en tu máquina. [Mediciones (en inglés)](docs/performance.md).
 - **Es seguro por defecto.** Los archivos originales solo se leen. Borrarlos es opcional y está controlado (mira abajo).
 - **Es sencillo.** Una página web, un menú de terminal que funciona por SSH y comandos para scripts.
 - **Te dice qué falla.** Una fuente parada, un hueco en los registros, un disco lleno: lo ves, y `loglem check` avisa a tu monitor.
@@ -36,7 +36,7 @@ Los registros se acumulan en muchos sitios. Nadie recuerda dónde están, cuánt
 | Fuente | Notas |
 |---|---|
 | Carpetas y archivos de texto `.log` | También archivos rotados, también `.gz` (el historial se importa una vez, nunca duplicado). |
-| Caddy, Nginx, Apache | Se encuentran solos en su configuración. |
+| Servidores web, bases de datos, correo, SSH, cron… | Reconocidos por sus recetas en `src/recipes/`: Nginx, Apache, Caddy, Traefik, HAProxy, PostgreSQL, MySQL y otros. Añadir uno es un solo archivo. |
 | Podman, Docker | Un contenedor, o por nombre mediante el journal. |
 | Kubernetes | Un pod, o todos los pods de una aplicación. |
 | Journal de Linux | Todo, o algunos servicios, programas o niveles de gravedad. |
@@ -50,7 +50,7 @@ Desactivada por defecto. Si la activas para una fuente, Loglem borra un archivo 
 3. Espera a que nadie haya modificado el archivo durante **24 horas**.
 4. Solo entonces borra el original.
 
-El archivo en el que un programa todavía escribe nunca se toca. Si falla un paso, el original se queda donde está. Vale para Caddy (archivos rotados) y para carpetas de archivos terminados.
+El archivo en el que un programa todavía escribe nunca se toca. Si falla un paso, el original se queda donde está. Vale para los archivos rotados de cualquier programa y para carpetas de archivos terminados.
 
 ## Inicio rápido
 
@@ -58,7 +58,7 @@ Después de la [instalación](#instalación):
 
 ```sh
 loglem                                  # menú en el terminal
-loglem discover                         # busca los registros de Caddy, Nginx y Apache
+loglem discover                         # busca los registros en la configuración de los programas conocidos
 loglem source add-folder --name web --path /srv/example/logs --days 28
 loglem collect
 loglem search --source web --text '/login' --from 2026-11-01
@@ -82,7 +82,7 @@ Cuando haya una versión publicada, descarga el paquete para tu máquina en la p
 | Linux Intel/AMD 64 bits | `x86_64-unknown-linux-gnu.tar.gz` |
 | Linux ARM64 | `aarch64-unknown-linux-gnu.tar.gz` |
 
-Los paquetes necesitan glibc 2.39 o posterior (por ejemplo Ubuntu 24.04).
+Los paquetes necesitan glibc 2.39 o posterior (por ejemplo Ubuntu 24.04). Las actualizaciones, los sellos de tiempo y `loglem tail --server` usan el comando `curl` del sistema.
 
 Comprueba la firma con la clave pública del editor (`release-public.pem`), obtenida por un canal independiente:
 

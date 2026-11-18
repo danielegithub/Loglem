@@ -6,10 +6,13 @@
 
 | Commande | Ce qu'elle fait |
 |---|---|
-| `source add-folder / add-file / add-caddy / add-podman / add-docker / add-kubernetes / add-journal` | Ajoute une source. |
+| `site add example.com`, `site list`, `site show example.com` | Crée un site, liste les sites ou affiche un site et ses journaux. |
+| `site copies example.com`, `site duplicates example.com [--external]` | Compte les emplacements des originaux et des archives et compare les lignes récentes. Avec `--external`, examine aussi les fichiers locaux, le journal et les conteneurs. |
+| `source add-folder / add-file / add-podman / add-docker / add-kubernetes / add-journal` | Ajoute une source. |
 | `source list`, `source set NOM --days N` | Liste les sources, change la durée. |
 | `source configure NOM …` | Nom, dossier des fichiers terminés, nettoyage des fichiers tournés, chemin. |
-| `discover` | Cherche les journaux de Caddy, Nginx et Apache. |
+| `discover` | Cherche les journaux dans la configuration des programmes connus (`src/recipes/`). |
+| `add`, `site rename / remove` | Ajout guidé (quoi, qui, où, récapitulatif) ; renommer ou supprimer un site. |
 | `podman-list`, `docker-list`, `kubernetes-list` | Liste les conteneurs ou les pods. |
 | `collect` | Lit une fois. |
 | `serve` / `web` | Lit en permanence et sert la page web. |
@@ -28,7 +31,7 @@
 
 | Commande | Ce qu'elle fait |
 |---|---|
-| `alerts list / add-pattern / add-size / add-free-space / remove / command / seen` | Règles d'alerte et notification. |
+| `alerts list / add-pattern / add-size / add-free-space / remove / command / seen / monitor / email-set / email-test / email-off / email-show` | Règles d'alerte et notification. |
 | `backup DIR`, `backup-verify DIR`, `restore DIR [--replace]` | Copie, contrôle et restaure les données. |
 | `proof enable / disable / verify` | Mode preuve : scelle chaque jour. |
 | `privacy set SOURCE …`, `privacy report` | Masque les IP, garde des champs JSON, liste ce qui est conservé. |
@@ -40,7 +43,7 @@
 
 | Commande | Ce qu'elle fait |
 |---|---|
-| `service install [--start] / start / stop / status` | Service : systemd sous Linux, launchd sous macOS. |
+| `service install [--start] / uninstall / start / stop / status` | Service : systemd sous Linux, launchd sous macOS. |
 | `access user-add / user-remove / user-list / address / proxy` | Autres ordinateurs : utilisateurs, adresse, reverse proxy. |
 | `config export / import / poll / web-port` | Réglages. |
 | `update check / install / status / configure` | Mises à jour signées (Linux). |

@@ -2,23 +2,27 @@
 
 Quelques étapes. Toutes les commandes sont dans [cli.md](cli.md).
 
-## 1. Ajouter une source
+## 1. Créer un site et connecter ses journaux
 
-Une **source** est l'endroit d'où viennent les journaux. Ajoutez-la depuis la page web (**Ajouter une source**), le menu du terminal ou la ligne de commande.
+Sur la page d’accueil, choisissez **Nuovo sito** et saisissez le nom du site ou du projet. Avec **Aggiungi un log**, sélectionnez le fichier, le dossier ou le service à lire. La page du site affiche l’origine, l’archive, la durée de conservation et les dernières lignes. **Cerca nei log del sito** limite la recherche à ce site.
 
 | Source | Commande |
 |---|---|
 | Dossier de fichiers `.log` | `loglem source add-folder --name web --path /var/log/myapp` |
 | Un fichier (et ses copies tournées) | `loglem source add-file --name api --path /var/log/api.log --rotated-pattern 'api.log.*'` |
-| Journal d'accès de Caddy | `loglem source add-caddy --name site --path /var/log/caddy/access.log` |
+| N'importe quel journal, guidé pas à pas (conseillé) | `loglem add` |
 | Conteneur Podman | `loglem source add-podman --name db --container db` |
 | Conteneur Docker | `loglem source add-docker --name db --container db` |
 | Pods Kubernetes | `loglem source add-kubernetes --name shop --namespace shop --selector app=web` |
 | Journal Linux | `loglem source add-journal --name ssh --identifier sshd` |
 
-`loglem discover` cherche les journaux de Caddy, Nginx et Apache sur ce serveur. La page web les propose en un clic.
+`loglem discover` cherche les journaux que les programmes connus indiquent dans leur configuration (voir `src/recipes/`). La page **Ajouter** le fait pour vous et explique pourquoi elle propose chaque journal.
 
 Les fichiers compressés `.gz` sont lus aussi. Loglem importe l'ancien historique une seule fois et ne duplique jamais une ligne.
+
+Choisis le site ou le projet lors de l’ajout d’une source. En ligne de commande, ajoute `--site example.com` à une commande `source add-*`. Pour déplacer une source existante, utilise `loglem source assign-site myapp example.com`. La page d’accueil regroupe les journaux par site. Les sources du journal système sans site rejoignent le groupe système. Lors de la migration, Loglem sauvegarde la configuration précédente dans `config.json.bak-AAAAMMJJ`.
+
+Ouvrez un site et dépliez **Copie** pour voir les chemins, les tailles et le responsable du nettoyage. Un fichier partagé compte une seule fois dans le total du site. Loglem compare jusqu’à 200 lignes récentes par source. Si plus de la moitié du plus grand échantillon correspond, vous pouvez suspendre une des deux collectes. La recherche externe examine sur demande les répertoires de journaux, `/var/log`, `/srv`, le journal local, Podman et Docker pendant huit secondes au maximum. Le total des octets identiques comprend uniquement les fichiers distincts vérifiés en entier.
 
 ## 2. Chercher et suivre en direct
 
@@ -53,6 +57,8 @@ loglem check                      # code de sortie 1 si quelque chose ne va pas
 
 Le service redémarre seul après un plantage. À un arrêt normal, il lit chaque source une dernière fois. Ce qui se passe quand Loglem est éteint : [stopping.md](stopping.md).
 
+Le service fait aussi le contrôle automatique (toutes les 5 minutes, sans cron). La page Sites et **Système → Service** montrent s'il tourne, depuis quand et combien de fois il a redémarré. Pour le retirer : `loglem service uninstall`. Les données restent.
+
 ## 5. Laisser Loglem supprimer les fichiers d'origine
 
 Désactivé par défaut. Loglem ne touche jamais le fichier dans lequel un programme écrit. Il supprime seulement les fichiers terminés, après ce contrôle :
@@ -64,7 +70,7 @@ Désactivé par défaut. Loglem ne touche jamais le fichier dans lequel un progr
 
 Si une étape échoue, l'original reste.
 
-**Caddy.** Ajoutez la source avec `add-caddy`. Loglem lit les fichiers tournés (aussi `.gz`) et les supprime après le contrôle. Utilisez le bloc `log` affiché par la page. `roll_keep_for 60d` est un filet de sécurité.
+**Fichiers après rotation.** Les nouvelles sources conservent les originaux. Pour supprimer les fichiers après vérification, activez le nettoyage dans les paramètres de la source.
 
 **Autres programmes.** Faites déposer par le programme les fichiers *terminés* dans un dossier à part, puis :
 
@@ -73,6 +79,8 @@ loglem source configure web --completed-dir /var/log/done --handoff-confirmed
 ```
 
 N'indiquez jamais un dossier où un programme écrit encore.
+
+**Qui supprime les originaux ?** Un seul endroit : le cadre de nettoyage dans les réglages de la source. Loglem lit les règles de logrotate et dit si une rotation existe déjà. Si logrotate (ou le programme) fait déjà tourner et supprime les fichiers, laissez le nettoyage de Loglem **désactivé** : deux systèmes qui suppriment les mêmes fichiers ne servent à rien et cachent les erreurs. Loglem prévient quand les deux sont actifs, quand les originaux durent plus longtemps que sa copie et quand les fichiers tournés ont des noms qu'il ne lit pas.
 
 ## 6. Ouvrir la page depuis un autre ordinateur
 
@@ -101,6 +109,20 @@ loglem backup-verify /backups/loglem-2026-11-17
 ```
 
 Les alertes apparaissent dans la page, dans `loglem check` et dans `data/health.json`. **Marquer comme vu** en masque une jusqu'à son retour. Une sauvegarde garde aussi les lignes expirées depuis.
+
+### État et alertes par e-mail
+
+Loglem se contrôle seul toutes les 5 minutes (à changer dans **Système → Contrôle automatique**, ou `loglem alerts monitor --every 10`). La page affiche « Tout va bien, contrôlé à 14:35 » ou ce qui ne va pas.
+
+Les alertes par e-mail sont facultatives et utilisent [Resend](https://resend.com) :
+
+```sh
+loglem alerts email-set --from noreply@example.com --to admin@example.com   # demande la clé
+loglem alerts email-test
+loglem alerts email-off            # supprime aussi la clé
+```
+
+Créez une clé **d'envoi seulement**, limitée à votre domaine, et vérifiez le domaine dans Resend. L'expéditeur peut être `noreply@` sur un sous-domaine. Les réponses ne sont pas lues. Loglem envoie un e-mail quand un problème s'ouvre, un quand il se ferme et un rappel s'il reste ouvert plus de 24 heures. Les e-mails ne contiennent aucune ligne de journal. Six par heure au maximum. La clé est dans un fichier privé (`secrets/resend.key`) : jamais dans les réglages, les exports, les sauvegardes ou les journaux.
 
 ## 8. Où sont vos données
 

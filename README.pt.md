@@ -25,7 +25,7 @@ Os logs acumulam-se em muitos sítios. Ninguém se lembra de onde estão, de que
 - **Vê tudo.** Uma lista: cada fonte, onde está, o tamanho, o estado.
 - **Escolhe por quanto tempo.** 28 dias, 6 meses, 2 anos, por fonte. As cópias antigas desaparecem sozinhas.
 - **Pode pesquisar.** Texto, datas, IP, caminho, código de resposta. Mesmo depois de o ficheiro ser rodado ou o contentor removido. As linhas novas aparecem em direto.
-- **Fica pequeno.** Um programa de cerca de 5 MB. Cerca de 8 MB de RAM em repouso (medidos em Linux). Sem servidor de base de dados, sem conta, sem nuvem. Os logs ficam na sua máquina.
+- **Fica pequeno.** Um programa de cerca de 4 MB. Cerca de 5 MB de RAM (medidos em Linux). O arquivo ocupa cerca de um décimo dos logs originais. Sem servidor de base de dados, sem conta, sem nuvem. Os logs ficam na sua máquina. [Medições (em inglês)](docs/performance.md).
 - **É seguro por defeito.** Os ficheiros originais só são lidos. Apagá-los é opcional e verificado (veja abaixo).
 - **É simples.** Uma página web, um menu de terminal que funciona por SSH e comandos para scripts.
 - **Mostra o que correu mal.** Uma fonte parada, uma falha nos logs, um disco cheio: vê-o, e o `loglem check` avisa o seu monitor.
@@ -36,7 +36,7 @@ Os logs acumulam-se em muitos sítios. Ninguém se lembra de onde estão, de que
 | Fonte | Notas |
 |---|---|
 | Pastas e ficheiros de texto `.log` | Também ficheiros rodados, também `.gz` (o histórico é importado uma vez, nunca duplicado). |
-| Caddy, Nginx, Apache | Encontrados sozinhos na sua configuração. |
+| Servidores web, bases de dados, correio, SSH, cron… | Reconhecidos pelas suas receitas em `src/recipes/`: Nginx, Apache, Caddy, Traefik, HAProxy, PostgreSQL, MySQL e outros. Adicionar um é um só ficheiro. |
 | Podman, Docker | Um contentor, ou pelo nome através do journal. |
 | Kubernetes | Um pod, ou todos os pods de uma aplicação. |
 | Journal do Linux | Tudo, ou alguns serviços, programas ou níveis de gravidade. |
@@ -50,7 +50,7 @@ Desligada por defeito. Se a ativar para uma fonte, o Loglem apaga um ficheiro te
 3. Espera que ninguém tenha modificado o ficheiro durante **24 horas**.
 4. Só então apaga o original.
 
-O ficheiro em que um programa ainda escreve nunca é tocado. Se um passo falhar, o original fica onde está. Vale para o Caddy (ficheiros rodados) e para pastas de ficheiros terminados.
+O ficheiro em que um programa ainda escreve nunca é tocado. Se um passo falhar, o original fica onde está. Vale para os ficheiros rodados de qualquer programa e para pastas de ficheiros terminados.
 
 ## Começar
 
@@ -58,7 +58,7 @@ Depois da [instalação](#instalação):
 
 ```sh
 loglem                                  # menu no terminal
-loglem discover                         # procura os logs do Caddy, Nginx e Apache
+loglem discover                         # procura os logs na configuração dos programas conhecidos
 loglem source add-folder --name web --path /srv/example/logs --days 28
 loglem collect
 loglem search --source web --text '/login' --from 2026-11-01
@@ -82,7 +82,7 @@ Quando houver uma versão publicada, descarregue o pacote para a sua máquina no
 | Linux Intel/AMD 64 bits | `x86_64-unknown-linux-gnu.tar.gz` |
 | Linux ARM64 | `aarch64-unknown-linux-gnu.tar.gz` |
 
-Os pacotes precisam de glibc 2.39 ou superior (por exemplo Ubuntu 24.04).
+Os pacotes precisam de glibc 2.39 ou superior (por exemplo Ubuntu 24.04). As atualizações, os carimbos temporais e `loglem tail --server` usam o comando `curl` do sistema.
 
 Verifique a assinatura com a chave pública do editor (`release-public.pem`), obtida por um canal independente:
 

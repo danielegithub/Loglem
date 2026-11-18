@@ -6,10 +6,13 @@
 
 | Befehl | Was er tut |
 |---|---|
-| `source add-folder / add-file / add-caddy / add-podman / add-docker / add-kubernetes / add-journal` | Fügt eine Quelle hinzu. |
+| `site add example.com`, `site list`, `site show example.com` | Website anlegen, Websites auflisten oder die Logs einer Website anzeigen. |
+| `site copies example.com`, `site duplicates example.com [--external]` | Originale und Archive zählen und aktuelle Zeilen vergleichen. Mit `--external` auch lokale Dateien, Journal und Container durchsuchen. |
+| `source add-folder / add-file / add-podman / add-docker / add-kubernetes / add-journal` | Fügt eine Quelle hinzu. |
 | `source list`, `source set NAME --days N` | Listet Quellen auf, ändert die Dauer. |
 | `source configure NAME …` | Name, Ordner für fertige Dateien, Aufräumen rotierter Dateien, Pfad. |
-| `discover` | Sucht die Logs von Caddy, Nginx und Apache. |
+| `discover` | Sucht Logs in der Konfiguration bekannter Programme (`src/recipes/`). |
+| `add`, `site rename / remove` | Geführtes Hinzufügen (was, wer, wo, Übersicht); Site umbenennen oder löschen. |
 | `podman-list`, `docker-list`, `kubernetes-list` | Listet Container oder Pods auf. |
 | `collect` | Liest einmal. |
 | `serve` / `web` | Liest dauerhaft und stellt die Webseite bereit. |
@@ -28,7 +31,7 @@
 
 | Befehl | Was er tut |
 |---|---|
-| `alerts list / add-pattern / add-size / add-free-space / remove / command / seen` | Warnregeln und Benachrichtigung. |
+| `alerts list / add-pattern / add-size / add-free-space / remove / command / seen / monitor / email-set / email-test / email-off / email-show` | Warnregeln und Benachrichtigung. |
 | `backup DIR`, `backup-verify DIR`, `restore DIR [--replace]` | Sichert, prüft und stellt Daten wieder her. |
 | `proof enable / disable / verify` | Beweismodus: versiegelt jeden Tag. |
 | `privacy set QUELLE …`, `privacy report` | Maskiert IPs, behält JSON-Felder, listet auf, was gespeichert ist. |
@@ -40,7 +43,7 @@
 
 | Befehl | Was er tut |
 |---|---|
-| `service install [--start] / start / stop / status` | Dienst: systemd unter Linux, launchd unter macOS. |
+| `service install [--start] / uninstall / start / stop / status` | Dienst: systemd unter Linux, launchd unter macOS. |
 | `access user-add / user-remove / user-list / address / proxy` | Andere Computer: Benutzer, Adresse, Reverse-Proxy. |
 | `config export / import / poll / web-port` | Einstellungen. |
 | `update check / install / status / configure` | Signierte Updates (Linux). |

@@ -25,7 +25,7 @@ Logs pile up in many places. Nobody remembers where they are, how big they are, 
 - **You see everything.** One list: every source, where it is, the size, the state.
 - **You choose how long.** 28 days, 6 months, 2 years, per source. Old copies disappear by themselves.
 - **You can search.** Text, dates, IP, path, status code. Also after the file was rotated or the container removed. New lines appear live.
-- **It stays small.** One program of about 5 MB. About 8 MB of RAM at rest (measured on Linux). No database server, no account, no cloud. Your logs stay on your machine.
+- **It stays small.** One program of about 4 MB. About 5 MB of RAM (measured on Linux). The archive takes about a tenth of the space of the original logs. No database server, no account, no cloud. Your logs stay on your machine. [Measurements](docs/performance.md).
 - **It is safe by default.** Original files are only read. Deleting them is optional and checked (see below).
 - **It is simple.** A web page, a terminal menu that works over SSH, and commands for scripts.
 - **It shows what went wrong.** A stopped source, a gap in the logs, a full disk: you see it, and `loglem check` tells your monitor.
@@ -36,7 +36,7 @@ Logs pile up in many places. Nobody remembers where they are, how big they are, 
 | Source | Notes |
 |---|---|
 | Folders and files of `.log` text | Also rotated files, also `.gz` (history is imported once, never duplicated). |
-| Caddy, Nginx, Apache | Found automatically in their configuration. |
+| Web servers, databases, mail, SSH, cron… | Recognized from their recipes in `src/recipes/`: Nginx, Apache, Caddy, Traefik, HAProxy, PostgreSQL, MySQL and more. Adding one is a single file. |
 | Podman, Docker | A container, or by name through the journal. |
 | Kubernetes | One pod, or all pods of an application. |
 | Linux journal | All of it, or some services, programs or severities. |
@@ -50,7 +50,7 @@ Off by default. When you turn it on for a source, Loglem deletes a finished file
 3. It waits until nobody has changed the file for **24 hours**.
 4. Only then it deletes the original.
 
-The file a program is still writing to is never touched. If any step fails, the original stays where it is. Works for Caddy (rotated files) and for folders of finished files.
+The file a program is still writing to is never touched. If any step fails, the original stays where it is. Works for rotated files of any program and for folders of finished files.
 
 ## Quick start
 
@@ -58,7 +58,7 @@ After [installing](#install):
 
 ```sh
 loglem                                  # terminal menu
-loglem discover                         # find Caddy, Nginx and Apache logs
+loglem discover                         # find logs in the configuration of known programs
 loglem source add-folder --name web --path /srv/example/logs --days 28
 loglem collect
 loglem search --source web --text '/login' --from 2026-11-01
@@ -82,7 +82,7 @@ When a release is published, download the package for your machine from the **Re
 | Linux Intel/AMD 64-bit | `x86_64-unknown-linux-gnu.tar.gz` |
 | Linux ARM64 | `aarch64-unknown-linux-gnu.tar.gz` |
 
-Packages need glibc 2.39 or later (for example Ubuntu 24.04).
+Packages need glibc 2.39 or later (for example Ubuntu 24.04). Updates, timestamps and `loglem tail --server` use the system `curl` command.
 
 Check the signature with the publisher's public key (`release-public.pem`), obtained through an independent channel:
 

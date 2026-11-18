@@ -25,7 +25,7 @@ I log si accumulano in tanti posti. Nessuno ricorda dove sono, quanto sono grand
 - **Vedi tutto.** Un elenco: ogni sorgente, dove si trova, la dimensione, lo stato.
 - **Scegli per quanto.** 28 giorni, 6 mesi, 2 anni, per sorgente. Le copie vecchie spariscono da sole.
 - **Puoi cercare.** Testo, date, IP, percorso, codice di risposta. Anche dopo che il file è stato ruotato o il container tolto. Le righe nuove compaiono in diretta.
-- **Resta piccolo.** Un programma di circa 5 MB. Circa 8 MB di RAM a riposo (misurati su Linux). Nessun server di database, nessun account, nessun cloud. I log restano sulla tua macchina.
+- **Resta piccolo.** Un programma di circa 4 MB. Circa 5 MB di RAM (misurati su Linux). L'archivio occupa circa un decimo dei log originali. Nessun server di database, nessun account, nessun cloud. I log restano sulla tua macchina. [Misure](docs/it/performance.md).
 - **È sicuro di default.** I file originali vengono solo letti. Cancellarli è facoltativo e controllato (vedi sotto).
 - **È semplice.** Una pagina web, un menu nel terminale che funziona via SSH e comandi per gli script.
 - **Ti dice cosa è andato storto.** Una sorgente ferma, una lacuna nei log, un disco pieno: lo vedi, e `loglem check` lo dice al tuo monitor.
@@ -36,7 +36,7 @@ I log si accumulano in tanti posti. Nessuno ricorda dove sono, quanto sono grand
 | Sorgente | Note |
 |---|---|
 | Cartelle e file di testo `.log` | Anche i file ruotati, anche `.gz` (lo storico si importa una volta, mai duplicato). |
-| Caddy, Nginx, Apache | Trovati da soli nella loro configurazione. |
+| Server web, database, posta, SSH, cron… | Riconosciuti dalle loro ricette in `src/recipes/`: Nginx, Apache, Caddy, Traefik, HAProxy, PostgreSQL, MySQL e altri. Aggiungerne uno è un solo file. |
 | Podman, Docker | Un container, oppure per nome tramite il journal. |
 | Kubernetes | Un pod, oppure tutti i pod di un'applicazione. |
 | Journal di Linux | Tutto, oppure alcuni servizi, programmi o gravità. |
@@ -50,7 +50,7 @@ Spenta di default. Quando la accendi per una sorgente, Loglem cancella un file f
 3. Aspetta che nessuno modifichi il file da **24 ore**.
 4. Solo allora cancella l'originale.
 
-Il file su cui un programma sta ancora scrivendo non viene mai toccato. Se un passo fallisce, l'originale resta dov'è. Vale per Caddy (file ruotati) e per le cartelle di file finiti.
+Il file su cui un programma sta ancora scrivendo non viene mai toccato. Se un passo fallisce, l'originale resta dov'è. Vale per i file ruotati di qualsiasi programma e per le cartelle di file finiti.
 
 ## Per iniziare
 
@@ -58,7 +58,7 @@ Dopo l'[installazione](#installazione):
 
 ```sh
 loglem                                  # menu nel terminale
-loglem discover                         # cerca i log di Caddy, Nginx e Apache
+loglem discover                         # cerca i log nella configurazione dei programmi conosciuti
 loglem source add-folder --name web --path /srv/example/logs --days 28
 loglem collect
 loglem search --source web --text '/login' --from 2026-11-01
@@ -82,7 +82,7 @@ Quando sarà pubblicata una versione, scarica il pacchetto per la tua macchina d
 | Linux Intel/AMD 64 bit | `x86_64-unknown-linux-gnu.tar.gz` |
 | Linux ARM64 | `aarch64-unknown-linux-gnu.tar.gz` |
 
-I pacchetti richiedono glibc 2.39 o successiva (per esempio Ubuntu 24.04).
+I pacchetti richiedono glibc 2.39 o successiva (per esempio Ubuntu 24.04). Aggiornamenti, marche temporali e `loglem tail --server` usano il comando `curl` del sistema.
 
 Controlla la firma con la chiave pubblica dell'editore (`release-public.pem`), ottenuta da un canale indipendente:
 

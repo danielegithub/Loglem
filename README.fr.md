@@ -25,7 +25,7 @@ Les journaux s'accumulent partout. Personne ne sait où ils sont, quelle taille 
 - **Vous voyez tout.** Une liste : chaque source, où elle est, sa taille, son état.
 - **Vous choisissez la durée.** 28 jours, 6 mois, 2 ans, par source. Les vieilles copies disparaissent seules.
 - **Vous pouvez chercher.** Texte, dates, IP, chemin, code de réponse. Même après la rotation du fichier ou la suppression du conteneur. Les nouvelles lignes arrivent en direct.
-- **Il reste petit.** Un programme d'environ 5 Mo. Environ 8 Mo de RAM au repos (mesurés sous Linux). Pas de serveur de base de données, pas de compte, pas de cloud. Vos journaux restent sur votre machine.
+- **Il reste petit.** Un programme d'environ 4 Mo. Environ 5 Mo de RAM (mesurés sous Linux). L'archive occupe environ un dixième de la place des journaux d'origine. Pas de serveur de base de données, pas de compte, pas de cloud. Vos journaux restent sur votre machine. [Mesures (en anglais)](docs/performance.md).
 - **Il est sûr par défaut.** Les fichiers d'origine sont seulement lus. Les supprimer est facultatif et contrôlé (voir plus bas).
 - **Il est simple.** Une page web, un menu terminal qui marche en SSH, et des commandes pour les scripts.
 - **Il montre ce qui va mal.** Une source arrêtée, un trou dans les journaux, un disque plein : vous le voyez, et `loglem check` prévient votre supervision.
@@ -36,7 +36,7 @@ Les journaux s'accumulent partout. Personne ne sait où ils sont, quelle taille 
 | Source | Remarques |
 |---|---|
 | Dossiers et fichiers texte `.log` | Aussi les fichiers tournés, aussi `.gz` (l'historique est importé une fois, jamais dupliqué). |
-| Caddy, Nginx, Apache | Trouvés seuls dans leur configuration. |
+| Serveurs web, bases de données, mail, SSH, cron… | Reconnus grâce à leurs recettes dans `src/recipes/` : Nginx, Apache, Caddy, Traefik, HAProxy, PostgreSQL, MySQL et d'autres. En ajouter un tient en un fichier. |
 | Podman, Docker | Un conteneur, ou par son nom via le journal. |
 | Kubernetes | Un pod, ou tous les pods d'une application. |
 | Journal Linux | Tout, ou certains services, programmes ou niveaux de gravité. |
@@ -50,7 +50,7 @@ Désactivé par défaut. Si vous l'activez pour une source, Loglem supprime un f
 3. Il attend que personne n'ait modifié le fichier depuis **24 heures**.
 4. Alors seulement, il supprime l'original.
 
-Le fichier dans lequel un programme écrit encore n'est jamais touché. Si une étape échoue, l'original reste où il est. Valable pour Caddy (fichiers tournés) et pour les dossiers de fichiers terminés.
+Le fichier dans lequel un programme écrit encore n'est jamais touché. Si une étape échoue, l'original reste où il est. Valable pour les fichiers tournés de n'importe quel programme et pour les dossiers de fichiers terminés.
 
 ## Démarrage rapide
 
@@ -58,7 +58,7 @@ Après l'[installation](#installation) :
 
 ```sh
 loglem                                  # menu dans le terminal
-loglem discover                         # trouve les journaux de Caddy, Nginx et Apache
+loglem discover                         # cherche les journaux dans la configuration des programmes connus
 loglem source add-folder --name web --path /srv/example/logs --days 28
 loglem collect
 loglem search --source web --text '/login' --from 2026-11-01
@@ -82,7 +82,7 @@ Quand une version sera publiée, téléchargez le paquet pour votre machine dans
 | Linux Intel/AMD 64 bits | `x86_64-unknown-linux-gnu.tar.gz` |
 | Linux ARM64 | `aarch64-unknown-linux-gnu.tar.gz` |
 
-Les paquets demandent glibc 2.39 ou plus (par exemple Ubuntu 24.04).
+Les paquets demandent glibc 2.39 ou plus (par exemple Ubuntu 24.04). Les mises à jour, les horodatages et `loglem tail --server` utilisent la commande `curl` du système.
 
 Vérifiez la signature avec la clé publique de l'éditeur (`release-public.pem`), obtenue par un canal indépendant :
 

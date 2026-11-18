@@ -6,10 +6,13 @@
 
 | Command | What it does |
 |---|---|
-| `source add-folder / add-file / add-caddy / add-podman / add-docker / add-kubernetes / add-journal` | Add a source. |
+| `site add example.com`, `site list`, `site show example.com` | Create a site, list sites or show a site and its logs. |
+| `site copies example.com`, `site duplicates example.com [--external]` | Count original locations and archives. Compare recent rows, also searching local files, the journal and containers with `--external`. |
+| `source add-folder / add-file / add-podman / add-docker / add-kubernetes / add-journal` | Add a source. |
 | `source list`, `source set NAME --days N` | List sources, change the duration. |
 | `source configure NAME …` | Name, folder for finished files, rotated-file cleanup, path. |
-| `discover` | Find Caddy, Nginx and Apache logs. |
+| `discover` | Find logs in the configuration of known programs (`src/recipes/`). |
+| `add`, `site rename / remove` | Guided add (what, who, where, summary); rename or delete a site. |
 | `podman-list`, `docker-list`, `kubernetes-list` | List containers or pods. |
 | `collect` | Read once. |
 | `serve` / `web` | Read all the time and serve the web page. |
@@ -28,7 +31,7 @@
 
 | Command | What it does |
 |---|---|
-| `alerts list / add-pattern / add-size / add-free-space / remove / command / seen` | Alert rules and notification. |
+| `alerts list / add-pattern / add-size / add-free-space / remove / command / seen / monitor / email-set / email-test / email-off / email-show` | Alert rules and notification. |
 | `backup DIR`, `backup-verify DIR`, `restore DIR [--replace]` | Copy, check and restore data. |
 | `proof enable / disable / verify` | Proof mode: seal each day. |
 | `privacy set SOURCE …`, `privacy report` | Mask IPs, keep JSON fields, list what is kept. |
@@ -40,7 +43,7 @@
 
 | Command | What it does |
 |---|---|
-| `service install [--start] / start / stop / status` | Service: systemd on Linux, launchd on macOS. |
+| `service install [--start] / uninstall / start / stop / status` | Service: systemd on Linux, launchd on macOS. |
 | `access user-add / user-remove / user-list / address / proxy` | Other computers: users, address, reverse proxy. |
 | `config export / import / poll / web-port` | Settings. |
 | `update check / install / status / configure` | Signed updates (Linux). |

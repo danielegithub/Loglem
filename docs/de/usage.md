@@ -2,23 +2,27 @@
 
 Wenige Schritte. Alle Befehle stehen in [cli.md](cli.md).
 
-## 1. Eine Quelle hinzufügen
+## 1. Website anlegen und Logs verbinden
 
-Eine **Quelle** ist der Ort, aus dem Logs kommen. Fügen Sie sie über die Webseite (**Quelle hinzufügen**), das Terminalmenü oder die Befehlszeile hinzu.
+Wählen Sie auf der Startseite **Nuovo sito** und geben Sie den Namen der Website oder des Projekts ein. Unter **Aggiungi un log** wählen Sie eine Datei, einen Ordner oder einen Dienst. Die Detailseite zeigt Quelle, Archiv, Aufbewahrungsdauer und die neuesten Einträge. Mit **Cerca nei log del sito** durchsuchen Sie nur diese Website.
 
 | Quelle | Befehl |
 |---|---|
 | Ordner mit `.log`-Dateien | `loglem source add-folder --name web --path /var/log/myapp` |
 | Eine Datei (und ihre rotierten Kopien) | `loglem source add-file --name api --path /var/log/api.log --rotated-pattern 'api.log.*'` |
-| Caddy-Zugriffslog | `loglem source add-caddy --name site --path /var/log/caddy/access.log` |
+| Jedes Log, Schritt für Schritt geführt (empfohlen) | `loglem add` |
 | Podman-Container | `loglem source add-podman --name db --container db` |
 | Docker-Container | `loglem source add-docker --name db --container db` |
 | Kubernetes-Pods | `loglem source add-kubernetes --name shop --namespace shop --selector app=web` |
 | Linux-Journal | `loglem source add-journal --name ssh --identifier sshd` |
 
-`loglem discover` sucht die Logs von Caddy, Nginx und Apache auf diesem Server. Die Webseite bietet sie mit einem Klick an.
+`loglem discover` sucht die Logs, die bekannte Programme in ihrer Konfiguration angeben (siehe `src/recipes/`). Die Seite **Hinzufügen** erledigt das für Sie und erklärt, warum sie jedes Log vorschlägt.
 
 Komprimierte `.gz`-Dateien werden auch gelesen. Loglem importiert alten Verlauf einmal und dupliziert nie eine Zeile.
+
+Beim Hinzufügen einer Quelle kannst du eine Website oder ein Projekt wählen. Verwende dazu bei jedem Befehl `source add-*` die Option `--site example.com`. Mit `loglem source assign-site myapp example.com` ordnest du eine bestehende Quelle zu. Die Startseite gruppiert die Logs nach Website. Journalquellen ohne Zuordnung beginnen in der Systemgruppe. Bei der Migration sichert Loglem die bisherige Konfiguration als `config.json.bak-JJJJMMTT`.
+
+Öffne eine Website und klappe **Copie** auf, um Pfade, Größen und Zuständigkeiten für die Bereinigung zu sehen. Gemeinsam genutzte Dateien zählen in der Summe einmal. Loglem vergleicht bis zu 200 aktuelle Zeilen je Quelle. Stimmen mehr als die Hälfte der Zeilen der größeren Stichprobe überein, kannst du eine der beiden Erfassungen pausieren. Die externe Suche prüft auf Wunsch bis zu acht Sekunden lang die Logverzeichnisse, `/var/log`, `/srv`, das lokale Journal sowie Podman und Docker. Die Summe identischer Bytes umfasst nur vollständig geprüfte, eigenständige Dateien.
 
 ## 2. Suchen und live verfolgen
 
@@ -53,6 +57,8 @@ loglem check                      # Exit-Code 1, wenn etwas nicht stimmt
 
 Der Dienst startet nach einem Absturz von selbst neu. Bei einem normalen Stopp liest er jede Quelle ein letztes Mal. Was passiert, solange Loglem aus ist: [stopping.md](stopping.md).
 
+Der Dienst führt auch die automatische Prüfung aus (alle 5 Minuten, ohne Cron). Die Seite Sites und **System → Dienst** zeigen, ob er läuft, seit wann und wie oft er neu gestartet wurde. Zum Entfernen: `loglem service uninstall`. Ihre Daten bleiben.
+
 ## 5. Loglem die Originaldateien löschen lassen
 
 Standardmäßig aus. Loglem fasst die Datei, in die ein Programm gerade schreibt, nie an. Es löscht nur fertige Dateien, nach dieser Prüfung:
@@ -64,7 +70,7 @@ Standardmäßig aus. Loglem fasst die Datei, in die ein Programm gerade schreibt
 
 Schlägt ein Schritt fehl, bleibt das Original.
 
-**Caddy.** Fügen Sie die Quelle mit `add-caddy` hinzu. Loglem liest die rotierten Dateien (auch `.gz`) und löscht sie nach der Prüfung. Nutzen Sie den `log`-Block, den die Seite anzeigt. `roll_keep_for 60d` ist ein Sicherheitsnetz.
+**Rotierte Dateien.** Neue Quellen behalten die Originale. Aktivieren Sie die Bereinigung in den Quelleneinstellungen, um geprüfte rotierte Dateien zu löschen.
 
 **Andere Programme.** Lassen Sie das Programm *fertige* Dateien in einem eigenen Ordner ablegen, dann:
 
@@ -73,6 +79,8 @@ loglem source configure web --completed-dir /var/log/done --handoff-confirmed
 ```
 
 Geben Sie nie einen Ordner an, in den ein Programm noch schreibt.
+
+**Wer löscht die Originale?** Eine einzige Stelle: das Bereinigungsfeld in den Einstellungen der Quelle. Loglem liest die Regeln von logrotate und sagt, ob schon eine Rotation besteht. Rotiert und löscht logrotate (oder das Programm) die Dateien bereits, lassen Sie die Bereinigung von Loglem **aus**: Zwei Systeme, die dieselben Dateien löschen, sind sinnlos und verdecken Fehler. Loglem warnt, wenn beide aktiv sind, wenn die Originale länger bleiben als seine Kopie und wenn rotierte Dateien Namen haben, die es nicht liest.
 
 ## 6. Die Seite von einem anderen Computer öffnen
 
@@ -101,6 +109,20 @@ loglem backup-verify /backups/loglem-2026-11-17
 ```
 
 Warnungen erscheinen auf der Seite, in `loglem check` und in `data/health.json`. **Als gesehen markieren** blendet eine aus, bis sie wiederkommt. Eine Sicherung enthält auch Zeilen, die inzwischen abgelaufen sind.
+
+### Status und E-Mail-Warnungen
+
+Loglem prüft sich alle 5 Minuten selbst (ändern unter **System → Automatische Prüfung** oder mit `loglem alerts monitor --every 10`). Die Seite zeigt „Alles in Ordnung, geprüft um 14:35“ oder was nicht stimmt.
+
+E-Mail-Warnungen sind freiwillig und nutzen [Resend](https://resend.com):
+
+```sh
+loglem alerts email-set --from noreply@example.com --to admin@example.com   # fragt nach dem Schlüssel
+loglem alerts email-test
+loglem alerts email-off            # löscht auch den Schlüssel
+```
+
+Erstellen Sie einen **reinen Sende-Schlüssel**, auf Ihre Domain beschränkt, und verifizieren Sie die Domain bei Resend. Der Absender kann `noreply@` auf einer Subdomain sein. Antworten werden nicht gelesen. Loglem sendet eine Mail, wenn ein Problem entsteht, eine, wenn es behoben ist, und eine Erinnerung, wenn es länger als 24 Stunden offen bleibt. Die Mails enthalten keine Logzeilen. Höchstens 6 pro Stunde. Der Schlüssel liegt in einer privaten Datei (`secrets/resend.key`): nie in den Einstellungen, Exporten, Backups oder Logs.
 
 ## 8. Wo Ihre Daten liegen
 

@@ -2,23 +2,27 @@
 
 Pocos pasos. Todos los comandos están en [cli.md](cli.md).
 
-## 1. Añade una fuente
+## 1. Crea un sitio y conecta sus registros
 
-Una **fuente** es el lugar de donde vienen los registros. Añádela desde la página web (**Añadir fuente**), el menú del terminal o la línea de comandos.
+En la página inicial elige **Nuovo sito** y escribe el nombre del sitio o proyecto. Pulsa **Aggiungi un log** y elige el archivo, carpeta o servicio que quieres leer. La página del sitio muestra el origen, el archivo de Loglem, el plazo de conservación y las últimas líneas. **Cerca nei log del sito** limita la búsqueda a ese sitio.
 
 | Fuente | Comando |
 |---|---|
 | Carpeta de archivos `.log` | `loglem source add-folder --name web --path /var/log/myapp` |
 | Un archivo (y sus copias rotadas) | `loglem source add-file --name api --path /var/log/api.log --rotated-pattern 'api.log.*'` |
-| Registro de acceso de Caddy | `loglem source add-caddy --name site --path /var/log/caddy/access.log` |
+| Cualquier registro, guiado paso a paso (recomendado) | `loglem add` |
 | Contenedor Podman | `loglem source add-podman --name db --container db` |
 | Contenedor Docker | `loglem source add-docker --name db --container db` |
 | Pods de Kubernetes | `loglem source add-kubernetes --name shop --namespace shop --selector app=web` |
 | Journal de Linux | `loglem source add-journal --name ssh --identifier sshd` |
 
-`loglem discover` busca los registros de Caddy, Nginx y Apache en este servidor. La página web los ofrece con un clic.
+`loglem discover` busca los registros que los programas conocidos indican en su configuración (ver `src/recipes/`). La página **Añadir** lo hace por ti y explica por qué propone cada registro.
 
 Los archivos comprimidos `.gz` también se leen. Loglem importa el historial una sola vez y nunca duplica una línea.
+
+Puedes elegir el sitio o proyecto al añadir una fuente. Añade `--site example.com` a cualquier comando `source add-*`. Para trasladar una fuente existente usa `loglem source assign-site myapp example.com`. La página inicial agrupa los registros por sitio. Las fuentes del journal sin sitio asignado empiezan en el grupo del sistema. Durante la migración, Loglem guarda la configuración anterior en `config.json.bak-AAAAMMDD`.
+
+Abre un sitio y despliega **Copie** para ver rutas, tamaños y quién se encarga de la limpieza. Un fichero compartido cuenta una sola vez en el total del sitio. Loglem compara hasta 200 líneas recientes por fuente. Si coincide más de la mitad de la muestra mayor, puedes pausar una de las dos fuentes. La búsqueda externa revisa a petición las carpetas de registros, `/var/log`, `/srv`, el journal local, Podman y Docker durante un máximo de ocho segundos. El total de bytes idénticos solo incluye ficheros distintos verificados por completo.
 
 ## 2. Busca y sigue en directo
 
@@ -53,6 +57,8 @@ loglem check                      # código de salida 1 si algo va mal
 
 El servicio se reinicia solo tras un fallo. En una parada normal lee cada fuente una última vez. Qué pasa mientras Loglem está apagado: [stopping.md](stopping.md).
 
+El servicio también hace la comprobación automática (cada 5 minutos, sin cron). La página Sitios y **Sistema → Servicio** muestran si está en marcha, desde cuándo y cuántas veces se ha reiniciado. Para quitarlo: `loglem service uninstall`. Los datos se quedan.
+
 ## 5. Deja que Loglem borre los archivos originales
 
 Desactivado por defecto. Loglem nunca toca el archivo en el que un programa está escribiendo. Borra solo archivos terminados, tras esta comprobación:
@@ -64,7 +70,7 @@ Desactivado por defecto. Loglem nunca toca el archivo en el que un programa est�
 
 Si un paso falla, el original se queda.
 
-**Caddy.** Añade la fuente con `add-caddy`. Loglem lee los archivos rotados (también `.gz`) y los borra tras la comprobación. Usa el bloque `log` que muestra la página. `roll_keep_for 60d` es una red de seguridad.
+**Archivos rotados.** Las fuentes nuevas conservan los originales. Para borrar archivos rotados después de verificarlos, activa la limpieza en los ajustes de la fuente.
 
 **Otros programas.** Haz que el programa deje los archivos *terminados* en una carpeta aparte y luego:
 
@@ -73,6 +79,8 @@ loglem source configure web --completed-dir /var/log/done --handoff-confirmed
 ```
 
 Nunca indiques una carpeta en la que un programa todavía escribe.
+
+**¿Quién borra los originales?** Un solo sitio: el cuadro de limpieza en los ajustes de la fuente. Loglem lee las reglas de logrotate y dice si ya existe una rotación. Si logrotate (o el programa) ya rota y borra los archivos, deja la limpieza de Loglem **apagada**: dos sistemas que borran los mismos archivos no sirven y esconden los errores. Loglem avisa si están los dos activos, si los originales duran más que su copia y si los archivos rotados tienen nombres que no lee.
 
 ## 6. Abre la página desde otro ordenador
 
@@ -101,6 +109,20 @@ loglem backup-verify /backups/loglem-2026-11-17
 ```
 
 Las alertas aparecen en la página, en `loglem check` y en `data/health.json`. **Marcar como visto** oculta una hasta que vuelva. Una copia de seguridad también guarda las líneas que han caducado desde entonces.
+
+### Estado y avisos por correo
+
+Loglem se comprueba solo cada 5 minutos (cámbialo en **Sistema → Comprobación automática**, o con `loglem alerts monitor --every 10`). La página muestra «Todo en orden, comprobado a las 14:35» o lo que falla.
+
+Los avisos por correo son opcionales y usan [Resend](https://resend.com):
+
+```sh
+loglem alerts email-set --from noreply@example.com --to admin@example.com   # pide la clave
+loglem alerts email-test
+loglem alerts email-off            # borra también la clave
+```
+
+Crea una clave **solo de envío** limitada a tu dominio y verifica el dominio en Resend. El remitente puede ser `noreply@` en un subdominio. Las respuestas no se leen. Loglem envía un correo cuando se abre un problema, otro cuando se cierra y un recordatorio si sigue abierto más de 24 horas. Los correos no contienen líneas de registro. Como máximo 6 por hora. La clave se guarda en un archivo privado (`secrets/resend.key`): nunca en los ajustes, las exportaciones, las copias de seguridad ni los registros.
 
 ## 8. Dónde están tus datos
 

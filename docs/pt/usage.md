@@ -2,23 +2,27 @@
 
 Poucos passos. Todos os comandos estão em [cli.md](cli.md).
 
-## 1. Adicione uma fonte
+## 1. Crie um site e ligue os registos
 
-Uma **fonte** é o sítio de onde vêm os logs. Adicione-a na página web (**Adicionar fonte**), no menu do terminal ou na linha de comandos.
+Na página inicial, escolha **Nuovo sito** e introduza o nome do site ou projeto. Em **Aggiungi un log**, escolha o ficheiro, pasta ou serviço a ler. A página do site mostra a origem, o arquivo, o prazo de conservação e as últimas linhas. **Cerca nei log del sito** limita a pesquisa ao site selecionado.
 
 | Fonte | Comando |
 |---|---|
 | Pasta de ficheiros `.log` | `loglem source add-folder --name web --path /var/log/myapp` |
 | Um ficheiro (e as suas cópias rodadas) | `loglem source add-file --name api --path /var/log/api.log --rotated-pattern 'api.log.*'` |
-| Log de acesso do Caddy | `loglem source add-caddy --name site --path /var/log/caddy/access.log` |
+| Qualquer log, guiado passo a passo (recomendado) | `loglem add` |
 | Contentor Podman | `loglem source add-podman --name db --container db` |
 | Contentor Docker | `loglem source add-docker --name db --container db` |
 | Pods Kubernetes | `loglem source add-kubernetes --name shop --namespace shop --selector app=web` |
 | Journal do Linux | `loglem source add-journal --name ssh --identifier sshd` |
 
-`loglem discover` procura os logs do Caddy, Nginx e Apache neste servidor. A página web mostra-os com um clique.
+`loglem discover` procura os logs que os programas conhecidos indicam na sua configuração (ver `src/recipes/`). A página **Adicionar** fá-lo por si e explica porque propõe cada log.
 
 Os ficheiros comprimidos `.gz` também são lidos. O Loglem importa o histórico uma só vez e nunca duplica uma linha.
+
+Escolhe o site ou projeto ao adicionar uma fonte. Acrescenta `--site example.com` a qualquer comando `source add-*`. Para mover uma fonte existente, usa `loglem source assign-site myapp example.com`. A página inicial agrupa os registos por site. As fontes do journal sem site começam no grupo do sistema. Durante a migração, o Loglem guarda a configuração anterior em `config.json.bak-AAAAMMDD`.
+
+Abra um site e expanda **Copie** para ver os caminhos, tamanhos e responsáveis pela limpeza. Um ficheiro partilhado conta uma única vez no total do site. O Loglem compara até 200 linhas recentes por origem. Se mais de metade da amostra maior coincidir, pode suspender uma das recolhas. A pesquisa externa verifica a pedido as pastas dos registos, `/var/log`, `/srv`, o journal local, Podman e Docker durante até oito segundos. O total de bytes idênticos inclui apenas ficheiros distintos verificados por inteiro.
 
 ## 2. Pesquise e siga em direto
 
@@ -53,6 +57,8 @@ loglem check                      # código de saída 1 se algo estiver mal
 
 O serviço reinicia sozinho depois de uma falha. Numa paragem normal, lê cada fonte uma última vez. O que acontece enquanto o Loglem está desligado: [stopping.md](stopping.md).
 
+O serviço também faz a verificação automática (a cada 5 minutos, sem cron). A página Sites e **Sistema → Serviço** mostram se está a correr, desde quando e quantas vezes reiniciou. Para o retirar: `loglem service uninstall`. Os dados ficam.
+
 ## 5. Deixe o Loglem apagar os ficheiros originais
 
 Desligado por defeito. O Loglem nunca toca no ficheiro em que um programa está a escrever. Apaga só ficheiros terminados, depois desta verificação:
@@ -64,7 +70,7 @@ Desligado por defeito. O Loglem nunca toca no ficheiro em que um programa está 
 
 Se um passo falhar, o original fica.
 
-**Caddy.** Adicione a fonte com `add-caddy`. O Loglem lê os ficheiros rodados (também `.gz`) e apaga-os depois da verificação. Use o bloco `log` mostrado pela página. `roll_keep_for 60d` é uma rede de segurança.
+**Ficheiros rodados.** As novas fontes conservam os originais. Para apagar os ficheiros rodados após a verificação, ative a limpeza nas definições da fonte.
 
 **Outros programas.** Faça o programa pôr os ficheiros *terminados* numa pasta à parte e depois:
 
@@ -73,6 +79,8 @@ loglem source configure web --completed-dir /var/log/done --handoff-confirmed
 ```
 
 Nunca indique uma pasta onde um programa ainda escreve.
+
+**Quem apaga os originais?** Um só sítio: a caixa de limpeza nas definições da fonte. O Loglem lê as regras do logrotate e diz se já existe uma rotação. Se o logrotate (ou o programa) já roda e apaga os ficheiros, deixe a limpeza do Loglem **desligada**: dois sistemas a apagar os mesmos ficheiros não servem e escondem os erros. O Loglem avisa se estão os dois ligados, se os originais duram mais do que a sua cópia e se os ficheiros rodados têm nomes que ele não lê.
 
 ## 6. Abra a página a partir de outro computador
 
@@ -101,6 +109,20 @@ loglem backup-verify /backups/loglem-2026-11-17
 ```
 
 Os alertas aparecem na página, no `loglem check` e em `data/health.json`. **Marcar como visto** esconde um até voltar. Uma cópia de segurança guarda também as linhas entretanto expiradas.
+
+### Estado e avisos por e-mail
+
+O Loglem verifica-se sozinho a cada 5 minutos (mude em **Sistema → Verificação automática**, ou com `loglem alerts monitor --every 10`). A página mostra «Tudo em ordem, verificado às 14:35» ou o que está mal.
+
+Os avisos por e-mail são opcionais e usam o [Resend](https://resend.com):
+
+```sh
+loglem alerts email-set --from noreply@example.com --to admin@example.com   # pede a chave
+loglem alerts email-test
+loglem alerts email-off            # apaga também a chave
+```
+
+Crie uma chave **só de envio** limitada ao seu domínio e verifique o domínio no Resend. O remetente pode ser `noreply@` num subdomínio. As respostas não são lidas. O Loglem envia um e-mail quando um problema abre, outro quando fecha e um lembrete se continuar aberto mais de 24 horas. Os e-mails não têm linhas de log. No máximo 6 por hora. A chave fica num ficheiro privado (`secrets/resend.key`): nunca nas definições, exportações, cópias de segurança ou logs.
 
 ## 8. Onde estão os seus dados
 
