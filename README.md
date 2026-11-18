@@ -6,7 +6,12 @@
 
 Loglem reads your logs, copies them into a searchable archive, and deletes the copies when the time you chose has passed. You use a web page or a terminal menu. No configuration files.
 
-> **Status: experimental.** It works and is tested on macOS. There is no published release yet, and some parts are not tested on real Linux. See [Limitations](docs/limitations.md).
+> **Status: under development (beta).** It works and is tested on macOS. There is no published release yet, and some parts are not tested on real Linux. See [Limitations](docs/limitations.md).
+>
+> - **Before you use it.** Try it first on a test machine and make a backup.
+> - **Deleting files.** Turning it on cannot be undone. Because Loglem is still being tested, try its features on a test machine, or think carefully before you turn deletion on.
+> - **No warranty.** Free software under the MIT license, provided "as is", without warranty of any kind. You use it at your own risk: the authors are not responsible for data loss or damage.
+> - **Not legal advice.** The tools for personal data help, but they do not make anyone compliant with the rules, and they are based on what is publicly available online. The choices remain with whoever uses Loglem.
 
 ## Contents
 
@@ -118,4 +123,4 @@ Everything lives in `~/Loglem`: the program and a `data/` folder. The installer 
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE). The full disclaimer of warranty is in the LICENSE file.

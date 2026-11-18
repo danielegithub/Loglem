@@ -6,7 +6,12 @@
 
 Loglem lee tus registros, los copia en un archivo donde se puede buscar y borra las copias cuando pasa el tiempo que elegiste. Usas una página web o un menú en el terminal. Sin archivos de configuración.
 
-> **Estado: experimental.** Funciona y está probado en macOS. Todavía no hay una versión publicada, y algunas partes no están probadas en un Linux real. Consulta los [límites](docs/es/limitations.md).
+> **Estado: en desarrollo (beta).** Funciona y está probado en macOS. Todavía no hay una versión publicada, y algunas partes no están probadas en un Linux real. Consulta los [límites](docs/es/limitations.md).
+>
+> - **Antes de usarlo.** Se recomienda probarlo primero en una máquina de pruebas y hacer una copia de seguridad.
+> - **Borrado de archivos.** Activarlo es irreversible. Como Loglem aún está en fase de pruebas, se recomienda probar sus funciones en una máquina de pruebas, o valorarlo bien antes de activar el borrado.
+> - **Sin garantía.** Software libre con licencia MIT, ofrecido «tal cual», sin garantías de ningún tipo. Quien lo usa lo hace bajo su propia responsabilidad: los autores no responden de pérdidas de datos ni de daños.
+> - **No es asesoramiento legal.** Las herramientas para datos personales ayudan, pero no hacen cumplir las normas a nadie y se basan en lo que circula por internet. Las decisiones siguen siendo de quien lo usa.
 
 ## Contenido
 
@@ -118,4 +123,4 @@ Todo está en `~/Loglem`: el programa y una carpeta `data/`. El instalador no in
 
 ## Licencia
 
-[MIT](LICENSE).
+[MIT](LICENSE). El texto completo de la exclusión de garantía está en el archivo LICENSE.

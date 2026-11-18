@@ -6,7 +6,12 @@
 
 O Loglem lê os seus logs, copia-os para um arquivo onde se pode pesquisar e apaga as cópias quando passa o tempo que escolheu. Usa uma página web ou um menu no terminal. Sem ficheiros de configuração.
 
-> **Estado: experimental.** Funciona e está testado no macOS. Ainda não há versão publicada, e algumas partes não estão testadas num Linux real. Veja os [limites](docs/pt/limitations.md).
+> **Estado: em desenvolvimento (beta).** Funciona e está testado no macOS. Ainda não há versão publicada, e algumas partes não estão testadas num Linux real. Veja os [limites](docs/pt/limitations.md).
+>
+> - **Antes de o usar.** Recomenda-se experimentá-lo primeiro numa máquina de teste e fazer uma cópia de segurança.
+> - **Apagar ficheiros.** Ativá-lo é irreversível. Como o Loglem ainda está em fase de teste, recomenda-se experimentar as funções numa máquina de teste, ou ponderar bem antes de ativar o apagamento.
+> - **Sem garantia.** Software livre com licença MIT, fornecido «tal como está», sem garantias de qualquer tipo. Quem o usa fá-lo por sua conta e risco: os autores não respondem por perdas de dados nem por danos.
+> - **Não é aconselhamento jurídico.** As ferramentas para dados pessoais ajudam, mas não tornam ninguém conforme com as regras e baseiam-se no que está divulgado na internet. As escolhas ficam sempre a cargo de quem o usa.
 
 ## Índice
 
@@ -118,4 +123,4 @@ Tudo fica em `~/Loglem`: o programa e uma pasta `data/`. O instalador não inici
 
 ## Licença
 
-[MIT](LICENSE).
+[MIT](LICENSE). O texto completo da exclusão de garantia está no ficheiro LICENSE.

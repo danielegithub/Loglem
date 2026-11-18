@@ -6,7 +6,12 @@
 
 Loglem liest Ihre Logs, kopiert sie in ein durchsuchbares Archiv und löscht die Kopien, wenn die gewählte Zeit abgelaufen ist. Sie nutzen eine Webseite oder ein Terminalmenü. Keine Konfigurationsdateien.
 
-> **Status: experimentell.** Es funktioniert und ist auf macOS getestet. Es gibt noch keine veröffentlichte Version, und einige Teile sind auf einem echten Linux nicht getestet. Siehe die [Einschränkungen](docs/de/limitations.md).
+> **Status: in Entwicklung (Beta).** Es funktioniert und ist auf macOS getestet. Es gibt noch keine veröffentlichte Version, und einige Teile sind auf einem echten Linux nicht getestet. Siehe die [Grenzen](docs/de/limitations.md).
+>
+> - **Vor der Benutzung.** Es wird empfohlen, es zuerst auf einem Testrechner auszuprobieren und ein Backup zu machen.
+> - **Dateien löschen.** Das Einschalten ist nicht rückgängig zu machen. Da sich Loglem noch im Test befindet, wird empfohlen, die Funktionen auf einem Testrechner auszuprobieren oder gut zu überlegen, bevor Sie das Löschen einschalten.
+> - **Keine Gewähr.** Freie Software unter der MIT-Lizenz, bereitgestellt „wie besehen“, ohne Gewähr jeder Art. Die Nutzung erfolgt auf eigenes Risiko: Die Autoren haften nicht für Datenverlust oder Schäden.
+> - **Keine Rechtsberatung.** Die Werkzeuge für personenbezogene Daten helfen, machen aber niemanden regelkonform und beruhen auf dem, was im Netz verbreitet ist. Die Entscheidungen bleiben bei den Nutzern.
 
 ## Inhalt
 
@@ -118,4 +123,4 @@ Alles liegt in `~/Loglem`: das Programm und ein Ordner `data/`. Das Installation
 
 ## Lizenz
 
-[MIT](LICENSE).
+[MIT](LICENSE). Der vollständige Haftungsausschluss steht in der Datei LICENSE.

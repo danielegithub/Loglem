@@ -6,7 +6,12 @@
 
 Loglem lit vos journaux, les copie dans une archive où l'on peut chercher, et supprime les copies quand le délai choisi est passé. Vous utilisez une page web ou un menu dans le terminal. Aucun fichier de configuration.
 
-> **État : expérimental.** Ça fonctionne et c'est testé sur macOS. Il n'y a pas encore de version publiée, et certaines parties ne sont pas testées sur un vrai Linux. Voir les [limites](docs/fr/limitations.md).
+> **État : en cours de développement (bêta).** Ça fonctionne et c'est testé sur macOS. Il n'y a pas encore de version publiée, et certaines parties ne sont pas testées sur un vrai Linux. Voir les [limites](docs/fr/limitations.md).
+>
+> - **Avant de l'utiliser.** Il est conseillé de l'essayer d'abord sur une machine de test et de faire une sauvegarde.
+> - **Suppression des fichiers.** L'activer est irréversible. Loglem étant encore en phase de test, il est conseillé d'en essayer les fonctions sur une machine de test, ou de bien réfléchir avant d'activer la suppression.
+> - **Aucune garantie.** Logiciel libre sous licence MIT, fourni « tel quel », sans garantie d'aucune sorte. Vous l'utilisez à vos risques : les auteurs ne sont pas responsables des pertes de données ou des dommages.
+> - **Pas un conseil juridique.** Les outils pour les données personnelles aident, mais ne rendent personne conforme aux règles, et ils reposent sur ce qui est diffusé en ligne. Les choix restent à la charge de celui qui l'utilise.
 
 ## Sommaire
 
@@ -118,4 +123,4 @@ Tout est dans `~/Loglem` : le programme et un dossier `data/`. L'installateur ne
 
 ## Licence
 
-[MIT](LICENSE).
+[MIT](LICENSE). Le texte complet de l'exclusion de garantie se trouve dans le fichier LICENSE.
