@@ -707,12 +707,22 @@ fn handle(stream: TcpStream, app: &App, address: &str) -> Result<()> {
             );
         };
         if token != Some(session.csrf.as_str()) {
-            return respond(stream, 403, "text/plain", b"Session token required");
+            return json_error(
+                stream,
+                403,
+                "Sessione da aggiornare",
+                json!({"session_expired":true}),
+            );
         }
         Some(session.role)
     } else {
         if token != Some(app.local_token.as_str()) {
-            return respond(stream, 403, "text/plain", b"Local session required");
+            return json_error(
+                stream,
+                403,
+                "Sessione da aggiornare",
+                json!({"session_expired":true,"local_session":true}),
+            );
         }
         None
     };

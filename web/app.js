@@ -49,11 +49,49 @@ function showNotice(message, isError = false) {
   box.hidden = false;
 }
 
+function goToSources(message) {
+  if (location.hash === '#sources') showNotice(message);
+  else {
+    window.addEventListener('hashchange', () => showNotice(message), { once:true });
+    location.hash = '#sources';
+  }
+}
+
 function hideNotice() {
   $('notice').hidden = true;
 }
 
+let sessionLocked = false;
+const sessionRetryKey = 'loglem-session-retry';
+async function recoverSession(restarted = false) {
+  if (sessionLocked) return;
+  sessionLocked = true;
+  document.body.classList.add('session-locked');
+  for (const panel of document.querySelectorAll('main, aside, dialog[open]')) {
+    if (panel.tagName === 'DIALOG') panel.close();
+    panel.inert = true;
+    for (const control of panel.querySelectorAll('button, input, select, textarea')) control.disabled = true;
+  }
+  const dialog = $('session-block');
+  $('session-message').textContent = restarted ? 'Loglem ha riavviato la sessione. Ricarico questa pagina…' : 'La sessione è cambiata. Sto ricollegando la pagina…';
+  dialog.showModal();
+  try {
+    if (!sessionStorage.getItem(sessionRetryKey)) {
+      sessionStorage.setItem(sessionRetryKey, '1');
+      const page = await fetch(location.href, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+      if (page.ok) {
+        location.reload();
+        return;
+      }
+    }
+  } catch (_) {}
+  $('session-message').textContent = 'La connessione alla sessione non è stata ripristinata. Ricarica per continuare. Le modifiche in corso non sono state salvate.';
+}
+$('session-block').addEventListener('cancel', event => event.preventDefault());
+$('retry-session').onclick = () => location.reload();
+
 async function api(path, data = {}) {
+  if (sessionLocked) throw new Error("Ricarica la pagina per continuare.");
   let response;
   try {
     response = await fetch('api/' + path, {
@@ -64,18 +102,17 @@ async function api(path, data = {}) {
   } catch (_) {
     throw new Error('Loglem non risponde. Controlla che sia ancora aperto nel terminale.');
   }
-  if (response.status === 401) {
-    // Sessione scaduta o utente eliminato: la pagina mostra di nuovo l'accesso.
-    location.reload();
-    throw new Error('Accesso scaduto: entra di nuovo.');
-  }
   const type = response.headers.get('content-type') || '';
-  if (!type.includes('application/json')) {
-    throw new Error(
-      'La sessione è scaduta. Ricarica la pagina usando l’indirizzo mostrato da Loglem.',
-    );
+  const result = type.includes('application/json') ? await response.json() : null;
+  if (response.status === 401 || result?.session_expired ||
+      (response.status === 403 && !result && /session.*required/i.test(await response.text()))) {
+    await recoverSession(result?.local_session === true);
+    throw new Error('Ricollegamento della sessione in corso.');
   }
-  const result = await response.json();
+  if (!result && !type.includes('application/json')) throw new Error('Risposta inattesa di Loglem. Riprova tra poco.');
+  if (path === 'status' && response.ok) {
+    try { sessionStorage.removeItem(sessionRetryKey); } catch (_) {}
+  }
   if (!response.ok) {
     throw new Error(result.error || 'Operazione non riuscita. Apri «Problemi» per i dettagli.');
   }
@@ -91,9 +128,14 @@ async function perform(button, action) {
   try {
     await action();
   } catch (error) {
-    showNotice(error.message, true);
+    const modal = button.closest('dialog[open]');
+    if (modal) {
+      let notice = modal.querySelector('[role=alert]');
+      if (!notice) { notice = element('p', undefined, 'card-error'); notice.setAttribute('role', 'alert'); modal.append(notice); }
+      notice.textContent = error.message;
+    } else if (!sessionLocked) showNotice(error.message, true);
   } finally {
-    button.disabled = false;
+    button.disabled = sessionLocked;
     button.removeAttribute('aria-busy');
     if (label !== null) button.textContent = label;
   }

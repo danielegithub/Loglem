@@ -1460,3 +1460,5 @@ button.danger {
 .proposal-preview pre{margin:.3rem 0 0;white-space:pre-wrap;word-break:break-all}
 .type-grid.compact .type-card{min-height:auto}
 .pre-line{white-space:pre-line}
+
+.session-locked button[type=submit] { visibility: hidden; }
