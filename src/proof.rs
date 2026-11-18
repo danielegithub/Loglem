@@ -228,7 +228,7 @@ pub fn seal(dir: &Path, source: &Source, store: &Archive, now: i64) -> Result<us
             let first: Option<i64> =
                 store
                     .db
-                    .query_row("SELECT min(collected_ns) FROM entries", [], |r| r.get(0))?;
+                    .query_row("SELECT min(t) FROM (SELECT min(collected_ns) t FROM entries UNION ALL SELECT min(first_col) FROM blocks)", [], |r| r.get(0))?;
             (day_start(first.unwrap_or(today)), "inizio".to_owned())
         }
     };
@@ -281,6 +281,16 @@ pub fn expire(dir: &Path, source: &Source, store: &Archive, cutoff: i64, now: i6
         if let Record::Sealed { day, .. } = record {
             let start = day_from_name(day)?;
             if start + DAY <= limit && !expired.contains(day) {
+                crate::blocks::discard(
+                    &store.db,
+                    "first_col>=? AND last_col<?",
+                    &[&start, &(start + DAY)],
+                )?;
+                crate::blocks::unpack(
+                    &store.db,
+                    "last_col>=? AND first_col<?",
+                    &[&start, &(start + DAY)],
+                )?;
                 store.db.execute(
                     "DELETE FROM entries WHERE collected_ns >= ?1 AND collected_ns < ?2",
                     params![start, start + DAY],
@@ -295,6 +305,11 @@ pub fn expire(dir: &Path, source: &Source, store: &Archive, cutoff: i64, now: i6
     }
     if source.proof.is_none() {
         // Dopo la disattivazione, applica la durata normale solo alle righe successive all’ultimo giorno sigillato.
+        crate::blocks::unpack(
+            &store.db,
+            "last_col>=?1 AND (first_col<?2 OR first_ns<?2)",
+            &[&(last + DAY), &cutoff],
+        )?;
         store.db.execute(
             "DELETE FROM entries WHERE collected_ns>=?1 AND (collected_ns<?2 OR event_ns<?2)",
             params![last + DAY, cutoff],
@@ -325,14 +340,12 @@ fn request_timestamp(dir: &Path, source: &str, day: &str, hash: &str, url: &str)
     let digest: [u8; 32] = hex(hash)?
         .try_into()
         .map_err(|_| anyhow::anyhow!("impronta non valida"))?;
-    let response = ureq::post(url)
-        .set("Content-Type", "application/timestamp-query")
-        .timeout(std::time::Duration::from_secs(30))
-        .send_bytes(&timestamp_request(&digest))
-        .map_err(|e| anyhow::anyhow!("Autorità di marca temporale non raggiungibile: {e}"))?;
     let mut body = Vec::new();
-    std::io::Read::read_to_end(
-        &mut std::io::Read::take(response.into_reader(), 1024 * 1024),
+    crate::http::transfer(
+        url,
+        &[("Content-Type", "application/timestamp-query")],
+        Some(&timestamp_request(&digest)),
+        1024 * 1024,
         &mut body,
     )?;
     // TimeStampResp: SEQUENCE { PKIStatusInfo SEQUENCE { INTEGER 0 = concessa } … }

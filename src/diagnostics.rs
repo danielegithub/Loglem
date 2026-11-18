@@ -51,7 +51,7 @@ pub fn record(
         fs::rename(&path, folder.join("loglem.1.log"))?;
     }
     let truncate = |s: String| s.chars().take(32_768).collect::<String>();
-    let event = json!({"timestamp":crate::timestamps::format_ns(crate::timestamps::now_ns()),"level":"error","version":crate::VERSION,"pid":std::process::id(),"component":component,"operation":operation,"source":source,"message":truncate(error.to_string()),"causes":error.chain().skip(1).take(16).map(|e|truncate(e.to_string())).collect::<Vec<_>>(),"backtrace":truncate(Backtrace::force_capture().to_string())});
+    let event = json!({"timestamp":crate::timestamps::format_ns(crate::timestamps::now_ns()),"level":"error","version":crate::VERSION,"pid":std::process::id(),"component":component,"operation":operation,"source":source,"message":truncate(error.to_string()),"causes":error.chain().skip(1).take(16).map(|e|truncate(e.to_string())).collect::<Vec<_>>(),"backtrace":truncate(Backtrace::capture().to_string())});
     let mut options = OpenOptions::new();
     options.create(true).append(true);
     #[cfg(unix)]

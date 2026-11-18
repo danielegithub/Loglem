@@ -146,13 +146,18 @@ pub fn apply(store: &Archive, privacy: &Privacy, now: i64) -> Result<usize> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(i64::MIN);
     let done_until = if changed_policy { i64::MIN } else { done_until };
+    let thawed = crate::blocks::unpack(
+        &store.db,
+        "first_ns<=?1 AND (last_ns>?2 OR last_col>=?3)",
+        &[&until, &done_until, &last_run],
+    )?;
     let mut changed = 0;
     let mut cursor = 0i64;
     loop {
         // Ordine stabile per id: una nuova classe può richiedere il trattamento di tutto lo storico.
         let tx = store.db.unchecked_transaction()?;
         let mut stmt = tx.prepare(
-            "SELECT id,message FROM log_rows WHERE id>?1 AND event_ns<=?2
+            "SELECT id,message FROM hot_rows WHERE id>?1 AND event_ns<=?2
             AND (event_ns>?3 OR collected_ns>=?4) ORDER BY id LIMIT 128",
         )?;
         let mut rows = stmt.query(params![cursor, until, done_until, last_run])?;
@@ -183,6 +188,9 @@ pub fn apply(store: &Archive, privacy: &Privacy, now: i64) -> Result<usize> {
             break;
         }
     }
+    if thawed {
+        crate::blocks::pack(&store.db, i64::MAX)?;
+    }
     store.set_state(DONE_UNTIL, &until.max(done_until).to_string())?;
     store.set_state(LAST_RUN, &now.to_string())?;
     store.set_state("privacy_policy", &policy)?;
@@ -202,7 +210,11 @@ pub fn report(dir: &std::path::Path) -> Result<String> {
         let kind = match source.log_kind {
             crate::model::LogKind::Access => "accessi (contiene IP)",
             crate::model::LogKind::Error => "errori",
-            crate::model::LogKind::Generic => "generico (può contenere dati personali)",
+            crate::model::LogKind::Application => "applicazione",
+            crate::model::LogKind::Database => "database",
+            crate::model::LogKind::AdminAccess => "accessi amministrativi",
+            crate::model::LogKind::System => "sistema",
+            crate::model::LogKind::Other => "altro",
         };
         let mask = match source.privacy.mask_ips_after_days {
             Some(0) => "subito".to_owned(),
@@ -217,7 +229,7 @@ pub fn report(dir: &std::path::Path) -> Result<String> {
         lines.push(format!(
             "{} | {kind} | {} | {mask} | {fields} | {} | {}",
             source.id,
-            source.period(),
+            source.retention,
             status.map(|s| s.entries).unwrap_or(0),
             status
                 .and_then(|s| s.earliest.clone())

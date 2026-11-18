@@ -32,6 +32,8 @@ jobs:
           cargo test --locked
           cargo build --locked --release
           ./target/release/loglem self-check
+          python3 .github/scripts/memory.py target/release/loglem
+          python3 .github/scripts/status_latency.py target/release/loglem
       - uses: actions/upload-artifact@v7
         with:
           name: dependency-lock-${{ matrix.runner }}

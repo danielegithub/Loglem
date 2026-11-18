@@ -15,9 +15,11 @@ FROM docker.io/library/rust:1-bullseye AS build
 ARG CARGO_FLAGS=""
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
+COPY .cargo/config.toml .cargo/config.toml
 # Prima solo le dipendenze: se cambia il codice, non si ricompilano.
 RUN mkdir src && echo 'fn main() {}' > src/main.rs && touch src/lib.rs \
     && cargo build --release --locked ${CARGO_FLAGS} && rm -rf src
+COPY build.rs build.rs
 COPY src src
 COPY web web
 RUN touch src/main.rs src/lib.rs \
@@ -25,7 +27,7 @@ RUN touch src/main.rs src/lib.rs \
     && ./target/release/loglem self-check
 
 FROM docker.io/library/debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends gpg rsync openssh-client ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends curl gpg rsync openssh-client ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 loglem \
     && mkdir /data /logs \

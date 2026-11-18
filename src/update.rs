@@ -6,7 +6,7 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    io::{Read, Write},
+    io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
@@ -132,28 +132,10 @@ pub fn verify_manifest(
     Ok(manifest)
 }
 
-fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .https_only(true)
-        .timeout(Duration::from_secs(120))
-        .user_agent(concat!("Loglem/", env!("CARGO_PKG_VERSION")))
-        .build()
-}
-
 fn fetch(url: &str, max: u64) -> Result<Vec<u8>> {
-    let response = agent()
-        .get(url)
-        .call()
-        .context("Cannot download release metadata")?;
-    let mut bytes = Vec::new();
-    response
-        .into_reader()
-        .take(max + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > max {
-        bail!("Download exceeds permitted size");
-    }
-    Ok(bytes)
+    let mut data = Vec::new();
+    crate::http::transfer(url, &[], None, max, &mut data)?;
+    Ok(data)
 }
 
 pub fn check(dir: &Path) -> Result<Manifest> {
@@ -208,15 +190,9 @@ pub fn prepare(dir: &Path) -> Result<PathBuf> {
         "https://github.com/{}/releases/download/v{}/{}",
         settings.repository, manifest.version, artifact.name
     );
-    let response = agent()
-        .get(&url)
-        .call()
-        .context("Cannot download application")?;
     let mut file = util::private_file(&stage.join("loglem"))?;
-    let downloaded = std::io::copy(
-        &mut response.into_reader().take(artifact.size + 1),
-        &mut file,
-    )?;
+    crate::http::transfer(&url, &[], None, artifact.size, &mut file)?;
+    let downloaded = file.metadata()?.len();
     file.sync_all()?;
     if downloaded != artifact.size || util::file_digest(&stage.join("loglem"))? != artifact.sha256 {
         bail!("Downloaded executable failed verification; current version unchanged");

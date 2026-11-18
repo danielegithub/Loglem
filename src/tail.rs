@@ -46,31 +46,38 @@ pub fn remote(server: &str, user: &str, source: Option<&str>, query: &Query) -> 
         bail!("Indica l'indirizzo completo, per esempio http://10.0.0.1:8790");
     }
     let password = crate::access::read_password(&format!("Password di {user}: "))?;
-    let agent = ureq::AgentBuilder::new()
-        .timeout_read(Duration::from_secs(30))
-        .build();
-    let login = post(
-        &agent,
+    let mut reply = Vec::new();
+    let cookie = crate::http::transfer(
         &format!("{server}/api/login"),
-        &[],
-        json!({"user": user, "password": password}),
-    )?;
-    let cookie = login
-        .header("set-cookie")
-        .and_then(|c| c.split(';').next())
-        .context("Il server non ha aperto una sessione")?
-        .to_owned();
-    let token = read_json(login)?["token"]
+        &[("Content-Type", "application/json")],
+        Some(&serde_json::to_vec(
+            &json!({"user":user,"password":password}),
+        )?),
+        65536,
+        &mut reply,
+    )?
+    .context("Il server non ha aperto una sessione")?;
+    let login: Value = serde_json::from_slice(&reply)?;
+    let token = login["token"]
         .as_str()
         .context("Il server non ha restituito il token di sessione")?
         .to_owned();
 
     let headers = [
+        ("Content-Type", "application/json"),
         ("Cookie", cookie.as_str()),
         ("X-Loglem-Token", token.as_str()),
     ];
     let call = |body: Value| -> Result<Value> {
-        read_json(post(&agent, &format!("{server}/api/tail"), &headers, body)?)
+        let mut reply = Vec::new();
+        crate::http::transfer(
+            &format!("{server}/api/tail"),
+            &headers,
+            Some(&serde_json::to_vec(&body)?),
+            64 * 1024 * 1024,
+            &mut reply,
+        )?;
+        Ok(serde_json::from_slice(&reply)?)
     };
     // Stessi filtri della ricerca, più la sorgente e il punto di ripartenza.
     let request = |after: &Value| -> Result<Value> {
@@ -86,38 +93,5 @@ pub fn remote(server: &str, user: &str, source: Option<&str>, query: &Query) -> 
         let rows: Vec<SearchRow> = serde_json::from_value(reply["rows"].clone())?;
         rows.iter().for_each(print);
         after = reply["after"].clone();
-    }
-}
-
-fn post(
-    agent: &ureq::Agent,
-    url: &str,
-    headers: &[(&str, &str)],
-    body: Value,
-) -> Result<ureq::Response> {
-    let mut request = agent.post(url).set("Content-Type", "application/json");
-    for (name, value) in headers {
-        request = request.set(name, value);
-    }
-    request.send_string(&body.to_string()).map_err(describe)
-}
-
-fn read_json(response: ureq::Response) -> Result<Value> {
-    serde_json::from_reader(response.into_reader()).context("Risposta del server non valida")
-}
-
-/// Messaggio leggibile per gli errori HTTP (password sbagliata, permessi, rete).
-fn describe(error: ureq::Error) -> anyhow::Error {
-    match error {
-        ureq::Error::Status(_, response) => {
-            let body: Value = serde_json::from_reader(response.into_reader()).unwrap_or_default();
-            anyhow::anyhow!(
-                "{}",
-                body["error"]
-                    .as_str()
-                    .unwrap_or("Il server ha rifiutato la richiesta")
-            )
-        }
-        ureq::Error::Transport(error) => anyhow::anyhow!("Server non raggiungibile: {error}"),
     }
 }

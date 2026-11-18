@@ -63,7 +63,7 @@ fn write_snapshot(dir: &Path, target: &Path, classes_only: bool) -> Result<Strin
     // Blocca le scritture durante la copia coordinata di SQLite, catena e marche.
     let _access = util::DataAccess::write(dir)?;
     let _config_lock = util::Lock::acquire(&dir.join("config.lock"))?;
-    let mut cfg = config::load(dir)?;
+    let mut cfg = config::load_locked(dir, &_config_lock)?;
     if classes_only {
         cfg.sources.retain(|s| {
             s.class
@@ -137,8 +137,7 @@ pub fn verify(target: &Path) -> Result<String> {
     if util::digest(&config_bytes) != manifest.config_sha256 {
         bail!("config.json è stato modificato o è danneggiato");
     }
-    let cfg: crate::model::Config = serde_json::from_slice(&config_bytes)?;
-    config::validate(&cfg)?;
+    config::decode(serde_json::from_slice(&config_bytes)?)?;
     for (relative, digest) in &manifest.proof_files {
         let file = Path::new(relative);
         anyhow::ensure!(
@@ -176,7 +175,12 @@ pub fn verify(target: &Path) -> Result<String> {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
         )?;
         let integrity: String = db.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
-        let entries: i64 = db.query_row("SELECT count(*) FROM entries", [], |r| r.get(0))?;
+        let count = if db.table_exists(None, "blocks")? {
+            "SELECT (SELECT count(*) FROM entries)+coalesce(sum(lines),0) FROM blocks"
+        } else {
+            "SELECT count(*) FROM entries"
+        };
+        let entries: i64 = db.query_row(count, [], |r| r.get(0))?;
         if integrity != "ok" || entries != copy.entries {
             bail!("{} non supera il controllo di integrità", copy.file);
         }
@@ -197,7 +201,10 @@ pub fn restore(dir: &Path, target: &Path, replace: bool) -> Result<String> {
         bail!("Ferma Loglem prima del ripristino (loglem service stop, o chiudi «loglem web»)");
     };
     let _access = util::DataAccess::write(dir)?;
-    if !replace && config::load(dir).is_ok_and(|c| !c.sources.is_empty()) {
+    if !replace && {
+        let c = config::load(dir)?;
+        !c.sources.is_empty() || c.sites.len() > 1
+    } {
         bail!(
             "Ci sono già dei dati in {}: usa --replace per sostituirli",
             dir.display()
@@ -212,8 +219,9 @@ pub fn restore(dir: &Path, target: &Path, replace: bool) -> Result<String> {
         }
         fs::copy(target.join(&copy.file), &destination)?;
     }
-    let mut restored: crate::model::Config =
-        serde_json::from_slice(&fs::read(target.join("config.json"))?)?;
+    let mut restored = config::decode(serde_json::from_slice(&fs::read(
+        target.join("config.json"),
+    )?)?)?;
     for source in &mut restored.sources {
         for ext in ["tsa", "chain"] {
             let name = format!("proof/{}.{ext}", source.id);

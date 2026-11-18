@@ -139,12 +139,18 @@ pub fn erase(
         if removed == 0 {
             continue;
         }
+        let bindings: Vec<&dyn rusqlite::ToSql> =
+            values.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+        let thawed=crate::blocks::unpack(&archive.db,&format!("id IN (SELECT DISTINCT block_id FROM log_rows WHERE block_id IS NOT NULL{filters})"),&bindings)?;
         archive.db.execute(
             &format!(
-                "DELETE FROM entries WHERE id IN (SELECT id FROM log_rows WHERE 1 = 1{filters})"
+                "DELETE FROM entries WHERE id IN (SELECT id FROM hot_rows WHERE 1 = 1{filters})"
             ),
             params_from_iter(values.clone()),
         )?;
+        if thawed {
+            crate::blocks::pack(&archive.db, i64::MAX)?;
+        }
         // Il contenuto cancellato non deve restare nei file di appoggio di SQLite.
         archive
             .db

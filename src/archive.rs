@@ -9,7 +9,7 @@ use rusqlite::{params, types::Value, Connection, OptionalExtension, Transaction}
 use std::{path::Path, time::Duration};
 
 const GAPS: &str = "gaps";
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 /// Versione 2: niente più copia identica di ogni riga (`raw`). Per ogni file già letto si
 /// calcola la catena di impronte dalle copie che ci sono ancora, poi la colonna sparisce.
@@ -19,7 +19,7 @@ fn migrate_v1_to_v2(db: &Connection) -> Result<()> {
     let result = (|| -> Result<()> {
         // Un altro processo può aver migrato mentre aspettavamo il blocco.
         let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version >= SCHEMA_VERSION {
+        if version >= 2 {
             return Ok(());
         }
         let rows_before: i64 = db.query_row("SELECT count(*) FROM entries", [], |r| r.get(0))?;
@@ -93,6 +93,38 @@ pub struct Archive {
     pub(crate) db: Connection,
 }
 
+/// Archivi già alla versione 4 creati quando `entry_total` non aveva ancora `first_ns`:
+/// `metrics.sql` si applica solo sotto la versione 4, quindi nessuno li aggiornava e ogni
+/// lettura dello stato falliva con «no such column: first_ns». Aggiunge la colonna, rifà i
+/// trigger (quelli vecchi non la aggiornano) e la ricalcola. Non perde né cambia nessuna riga.
+fn repair_entry_total(db: &Connection) -> Result<()> {
+    let columns = |name: &str| -> Result<i64> {
+        Ok(db.query_row(
+            "SELECT count(*) FROM pragma_table_info('entry_total') WHERE name=?1",
+            [name],
+            |r| r.get(0),
+        )?)
+    };
+    if columns("n")? == 0 || columns("first_ns")? > 0 {
+        return Ok(());
+    }
+    let tx = db.unchecked_transaction()?;
+    tx.execute_batch(
+        "DROP TRIGGER IF EXISTS metrics_insert; \
+         DROP TRIGGER IF EXISTS metrics_delete; \
+         DROP TRIGGER IF EXISTS metrics_edit; \
+         ALTER TABLE entry_total ADD COLUMN first_ns INTEGER;",
+    )?;
+    tx.execute_batch(include_str!("metrics.sql"))?;
+    tx.execute(
+        "UPDATE entry_total SET first_ns=(SELECT min(t) FROM \
+         (SELECT min(event_ns) t FROM entries UNION ALL SELECT min(first_ns) FROM blocks))",
+        [],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
 impl Archive {
     pub fn open(path: &Path) -> Result<Self> {
         private_dir(
@@ -124,7 +156,31 @@ impl Archive {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
         }
+        if version < 4 {
+            let tx = db.unchecked_transaction()?;
+            tx.execute_batch(include_str!("metrics.sql"))?;
+            tx.execute_batch(include_str!("blocks.sql"))?;
+            tx.execute(
+                "INSERT OR IGNORE INTO state SELECT 'highest_id',coalesce(max(id),0) FROM entries",
+                [],
+            )?;
+            tx.commit()?;
+        }
+        repair_entry_total(&db)?;
+        Self::with_log_rows(db)
+    }
+
+    /// Consultation opens existing archives without creating or migrating them.
+    pub(crate) fn open_reader(path: &Path) -> Result<Self> {
+        let db = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        db.busy_timeout(Duration::from_millis(250))?;
+        db.execute_batch("PRAGMA cache_size=-512; PRAGMA mmap_size=0")?;
+        Self::with_log_rows(db)
+    }
+
+    fn with_log_rows(db: Connection) -> Result<Self> {
         use rusqlite::functions::FunctionFlags;
+        crate::formats::register(&db)?;
         db.create_scalar_function(
             "loglem_decode",
             1,
@@ -145,71 +201,36 @@ impl Archive {
                 Ok(text)
             },
         )?;
-        db.execute_batch("CREATE TEMP VIEW log_rows AS SELECT id,record_key,file_id,generation,byte_offset,event_ns,collected_ns,timestamp_origin,CASE typeof(message) WHEN 'blob' THEN loglem_decode(message) ELSE message END AS message FROM main.entries")?;
+        db.execute_batch("CREATE TEMP VIEW hot_rows AS SELECT id,record_key,file_id,generation,byte_offset,event_ns,collected_ns,timestamp_origin,CASE typeof(message) WHEN 'blob' THEN loglem_decode(message) ELSE message END AS message FROM main.entries")?;
+        if db.table_exists(None, "blocks")? {
+            db.execute_batch(crate::blocks::VIEW)?;
+        } else {
+            db.execute_batch(
+                "CREATE TEMP VIEW log_rows AS SELECT *,NULL AS block_id,id AS last_id,event_ns AS last_ns,event_ns AS first_ns FROM hot_rows",
+            )?;
+        }
         Ok(Self { db })
     }
 
     pub fn compress_closed(&self) -> Result<()> {
-        use std::io::Write;
-        let cutoff = chrono::Utc::now()
-            .date_naive()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_utc()
-            .timestamp_nanos_opt()
-            .unwrap();
-        let last_time = self
-            .get_state("compression_time")?
-            .and_then(|v| v.parse::<i64>().ok())
-            .unwrap_or(i64::MIN);
-        let last_id = self
-            .get_state("compression_id")?
-            .and_then(|v| v.parse::<i64>().ok())
-            .unwrap_or(0);
-        let tx = self.db.unchecked_transaction()?;
-        let mut stmt = tx.prepare(
-            "SELECT collected_ns,id,message FROM entries
-            WHERE (collected_ns,id)>(?1,?2) AND collected_ns<?3 AND typeof(message)='text'
-            ORDER BY collected_ns,id LIMIT 256",
-        )?;
-        let mut rows = stmt.query(params![last_time, last_id, cutoff])?;
-        let mut cursor = None;
-        let mut compressed = false;
-        while let Some(row) = rows.next()? {
-            let at: i64 = row.get(0)?;
-            let id: i64 = row.get(1)?;
-            let text: String = row.get(2)?;
-            let mut encoder =
-                flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
-            encoder.write_all(text.as_bytes())?;
-            let bytes = encoder.finish()?;
-            if bytes.len() < text.len() {
-                tx.execute(
-                    "UPDATE entries SET message=? WHERE id=?",
-                    params![bytes, id],
-                )?;
-                compressed = true;
-            }
-            cursor = Some((at, id));
-        }
-        drop(rows);
-        drop(stmt);
-        if compressed {
-            tx.pragma_update(None, "user_version", 3)?;
-        }
-        if let Some((at, id)) = cursor {
-            self.set_state("compression_time", &at.to_string())?;
-            self.set_state("compression_id", &id.to_string())?;
-        }
-        tx.commit()?;
-        Ok(())
+        crate::blocks::pack(&self.db, crate::timestamps::now_ns())
     }
 
     /// Vero se l'archivio è nel formato precedente e va migrato (non lo modifica).
     pub fn needs_migration(path: &Path) -> bool {
         Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .and_then(|db| db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)))
-            .is_ok_and(|version| version == 1)
+            .and_then(|db| {
+                let version = db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?;
+                // Alla versione 4 ma con `entry_total` vecchia: va riparata prima di leggerla.
+                let old_totals: i64 = db.query_row(
+                    "SELECT (SELECT count(*) FROM pragma_table_info('entry_total') WHERE name='n') \
+                     > 0 AND (SELECT count(*) FROM pragma_table_info('entry_total') WHERE name='first_ns') = 0",
+                    [],
+                    |r| r.get(0),
+                )?;
+                Ok(version > 0 && (version < SCHEMA_VERSION || old_totals == 1))
+            })
+            .unwrap_or(false)
     }
 
     pub fn cursor(&self, file_id: &str) -> Result<Cursor> {
@@ -234,22 +255,33 @@ impl Archive {
 
     fn insert(tx: &Transaction<'_>, entries: &[Entry]) -> Result<usize> {
         let mut added = 0;
-        let mut statement = tx.prepare_cached(
-            "INSERT OR IGNORE INTO entries(record_key, file_id, generation, byte_offset, \
-             event_ns, collected_ns, timestamp_origin, message) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        )?;
-        for entry in entries {
-            added += statement.execute(params![
-                entry.key,
-                entry.file_id,
-                entry.generation,
-                entry.offset,
-                entry.event_ns,
-                entry.collected_ns,
-                entry.timestamp_origin,
-                entry.message
+        let mut last:i64=tx.query_row("SELECT max(coalesce((SELECT max(id) FROM entries),0),coalesce((SELECT CAST(value AS INTEGER) FROM state WHERE key='highest_id'),0))",[],|r|r.get(0))?;
+        let mut insert=tx.prepare_cached("INSERT OR IGNORE INTO entries(id,record_key,file_id,generation,byte_offset,event_ns,collected_ns,timestamp_origin,message) VALUES(?,?,?,?,?,?,?,?,?)")?;
+        let mut seen=tx.prepare_cached("SELECT EXISTS(SELECT 1 FROM block_keys WHERE key=?1) OR EXISTS(SELECT 1 FROM blocks b JOIN files f ON f.id=b.file_ref WHERE f.name=?2 AND b.generation=?3 AND b.last_offset>=?4 AND b.first_offset<=?4 AND EXISTS(SELECT 1 FROM json_each(loglem_decode(b.data)) j WHERE j.value->>1=?1))")?;
+        for e in entries {
+            if seen.query_row(params![e.key, e.file_id, e.generation, e.offset], |r| {
+                r.get::<_, bool>(0)
+            })? {
+                continue;
+            }
+            let n = insert.execute(params![
+                last + 1,
+                e.key,
+                e.file_id,
+                e.generation,
+                e.offset,
+                e.event_ns,
+                e.collected_ns,
+                e.timestamp_origin,
+                e.message
             ])?;
+            last += n as i64;
+            added += n;
         }
+        tx.execute(
+            "INSERT OR REPLACE INTO state VALUES('highest_id',?)",
+            [last],
+        )?;
         Ok(added)
     }
 
@@ -277,6 +309,9 @@ impl Archive {
             ],
         )?;
         tx.commit()?;
+        if added > 0 {
+            self.compress_closed()?;
+        }
         Ok(added)
     }
 
@@ -284,6 +319,9 @@ impl Archive {
         let tx = self.db.transaction()?;
         let added = Self::insert(&tx, entries)?;
         tx.commit()?;
+        if added > 0 {
+            self.compress_closed()?;
+        }
         Ok(added)
     }
 
@@ -321,8 +359,10 @@ impl Archive {
     }
 
     pub fn retain_since(&mut self, cutoff: i64) -> Result<usize> {
+        let mut deleted =
+            crate::blocks::discard(&self.db, "last_ns<?1 OR last_col<?1", &[&cutoff])?;
+        let thawed = crate::blocks::unpack(&self.db, "first_ns<?1 OR first_col<?1", &[&cutoff])?;
         // Delete in bounded transactions so retention cannot monopolize the archive.
-        let mut deleted = 0;
         loop {
             let n = self.db.execute(
                 concat!(
@@ -336,6 +376,9 @@ impl Archive {
                 break;
             }
         }
+        if thawed {
+            crate::blocks::pack(&self.db, i64::MAX)?;
+        }
         // Secure deletion is enabled; checkpoints may be deferred while another reader is active.
         self.db
             .execute_batch("PRAGMA incremental_vacuum(128); PRAGMA wal_checkpoint(TRUNCATE);")?;
@@ -343,9 +386,16 @@ impl Archive {
     }
 
     pub fn stats(&self) -> Result<(i64, Option<i64>)> {
+        if !self.db.table_exists(None, "entry_total")? {
+            return Ok(self.db.query_row(
+                "SELECT count(*),min(event_ns) FROM entries",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?);
+        }
         Ok(self
             .db
-            .query_row("SELECT count(*), min(event_ns) FROM entries", [], |r| {
+            .query_row("SELECT n,first_ns FROM entry_total", [], |r| {
                 Ok((r.get(0)?, r.get(1)?))
             })?)
     }
@@ -358,28 +408,7 @@ impl Archive {
         until: i64,
         limit: usize,
     ) -> Result<Vec<SearchRow>> {
-        let (filters, mut values) = query.sql();
-        let mut stmt = self.db.prepare(&format!(
-            "SELECT event_ns, timestamp_origin, message FROM log_rows \
-             WHERE event_ns >= ? AND event_ns < ?{filters} \
-             ORDER BY event_ns DESC, id DESC LIMIT ?"
-        ))?;
-        values.insert(0, Value::Integer(from));
-        values.insert(1, Value::Integer(until));
-        values.push(Value::Integer(limit.min(1000) as i64));
-        let result = stmt
-            .query_map(rusqlite::params_from_iter(values), |row| {
-                let message: String = row.get(2)?;
-                Ok(SearchRow {
-                    source: source.into(),
-                    timestamp: format_ns(row.get(0)?),
-                    timestamp_origin: row.get(1)?,
-                    level: crate::query::severity(&message).name().to_owned(),
-                    message,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(result)
+        crate::blocks::search(&self.db, source, query, from, until, limit)
     }
 
     /// Quante righe dal momento `since` contengono `text` (per gli allarmi).
@@ -391,6 +420,37 @@ impl Archive {
         )?)
     }
 
+    pub(crate) fn pattern_hits(&self, since: i64, text: &str, minutes: u32) -> Result<i64> {
+        let key = crate::util::digest(format!("{minutes}\0{text}").as_bytes());
+        let tx = self.db.unchecked_transaction()?;
+        let upto = tx
+            .query_row("SELECT upto FROM alert_scan WHERE key=?", [&key], |r| {
+                r.get::<_, i64>(0)
+            })
+            .optional()?
+            .unwrap_or(0);
+        let last: i64 = tx.query_row(
+            "SELECT CAST(value AS INTEGER) FROM state WHERE key='highest_id'",
+            [],
+            |r| r.get(0),
+        )?;
+        if last > upto {
+            tx.execute("INSERT OR IGNORE INTO alert_hits SELECT ?1,id,event_ns FROM log_rows WHERE last_id>?2 AND last_ns>=?3 AND id>?2 AND event_ns>=?3 AND instr(message,?4)>0",params![key,upto,since,text])?;
+        }
+        tx.execute(
+            "DELETE FROM alert_hits WHERE key=? AND at<?",
+            params![key, since],
+        )?;
+        tx.execute(
+            "INSERT OR REPLACE INTO alert_scan VALUES(?,?)",
+            params![key, last],
+        )?;
+        let count = tx.query_row("SELECT count(*) FROM alert_hits WHERE key=?", [key], |r| {
+            r.get(0)
+        })?;
+        tx.commit()?;
+        Ok(count)
+    }
     /// Registra una lacuna. Se continua quella precedente con lo stesso motivo,
     /// la allunga invece di aggiungerne un'altra. Restano le ultime 20.
     pub fn record_gap(&self, from_ns: i64, to_ns: i64, reason: &str) -> Result<()> {
@@ -427,13 +487,13 @@ impl Archive {
     ) -> Result<(Vec<SearchRow>, i64)> {
         let last: i64 = self
             .db
-            .query_row("SELECT coalesce(max(id), 0) FROM entries", [], |r| r.get(0))?;
-        // Se la scadenza ha svuotato l'archivio, la numerazione ricomincia da capo.
+            .query_row("SELECT max(coalesce((SELECT max(id) FROM entries),0),coalesce((SELECT CAST(value AS INTEGER) FROM state WHERE key='highest_id'),0))", [], |r| r.get(0))?;
+        // Un archivio ripristinato può avere un ultimo id precedente al cursore del client.
         let after = if last < after { 0 } else { after };
         let (filters, mut values) = query.sql();
         let mut stmt = self.db.prepare(&format!(
             "SELECT id, event_ns, timestamp_origin, message FROM log_rows \
-             WHERE id > ?{filters} ORDER BY id LIMIT ?"
+             WHERE last_id > ?1 AND id > ?1{filters} ORDER BY id LIMIT ?"
         ))?;
         values.insert(0, Value::Integer(after));
         values.push(Value::Integer(limit as i64));
@@ -480,6 +540,11 @@ impl Archive {
     /// nuovo contenuto. Le righe già archiviate passano alla nuova identità e il punto di lettura
     /// va in fondo al nuovo file, così non viene riletto come se fosse nuovo.
     pub fn rekey_file(&mut self, old_id: &str, new_id: &str, cursor: &Cursor) -> Result<()> {
+        crate::blocks::unpack(
+            &self.db,
+            "file_ref=(SELECT id FROM files WHERE name=?)",
+            &[&old_id],
+        )?;
         let tx = self.db.transaction()?;
         tx.execute(
             "UPDATE entries SET file_id = ?1 WHERE file_id = ?2",
@@ -505,9 +570,85 @@ impl Archive {
     /// Quante righe di questa lettura di file sono ancora nell'archivio (le scadute mancano).
     pub fn rows_of_file(&self, file_id: &str, generation: i64) -> Result<u64> {
         Ok(self.db.query_row(
-            "SELECT count(*) FROM entries WHERE file_id = ?1 AND generation = ?2",
+            "SELECT (SELECT count(*) FROM entries WHERE file_id=?1 AND generation=?2)+coalesce((SELECT sum(lines) FROM blocks WHERE file_ref=(SELECT id FROM files WHERE name=?1) AND generation=?2),0)",
             params![file_id, generation],
             |r| r.get::<_, i64>(0),
         )? as u64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Un archivio com'era prima che `entry_total` avesse `first_ns`, con le sue righe.
+    fn old_archive(path: &Path) {
+        let archive = Archive::open(path).unwrap();
+        for (i, ns) in [300_i64, 100, 200].iter().enumerate() {
+            archive
+                .db
+                .execute(
+                    "INSERT INTO entries(record_key,file_id,generation,byte_offset,event_ns,collected_ns,timestamp_origin,message) \
+                     VALUES(?1,'f',1,?2,?3,?3,'event','riga')",
+                    rusqlite::params![format!("k{i}"), i as i64, ns],
+                )
+                .unwrap();
+        }
+        drop(archive);
+        let db = Connection::open(path).unwrap();
+        db.execute_batch(
+            "DROP TRIGGER metrics_insert; DROP TRIGGER metrics_delete; DROP TRIGGER metrics_edit; \
+             ALTER TABLE entry_total DROP COLUMN first_ns; \
+             CREATE TRIGGER metrics_insert AFTER INSERT ON entries BEGIN UPDATE entry_total SET n=n+1; END; \
+             CREATE TRIGGER metrics_delete AFTER DELETE ON entries BEGIN UPDATE entry_total SET n=n-1; END; \
+             CREATE TRIGGER metrics_edit AFTER UPDATE OF message ON entries BEGIN SELECT 1; END;",
+        )
+        .unwrap();
+        assert!(db
+            .query_row("SELECT n,first_ns FROM entry_total", [], |r| r
+                .get::<_, i64>(0))
+            .is_err());
+    }
+
+    #[test]
+    fn a_version_4_archive_without_first_ns_is_repaired_when_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.db");
+        old_archive(&path);
+        let archive = Archive::open(&path).unwrap();
+        let (n, first): (i64, Option<i64>) = archive
+            .db
+            .query_row("SELECT n,first_ns FROM entry_total", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(
+            (n, first),
+            (3, Some(100)),
+            "righe e data più vecchia ricalcolate"
+        );
+        // I trigger nuovi tengono i valori giusti dopo la riparazione.
+        archive
+            .db
+            .execute(
+                "INSERT INTO entries(record_key,file_id,generation,byte_offset,event_ns,collected_ns,timestamp_origin,message) VALUES('k9','f',1,9,50,50,'event','nuova')",
+                [],
+            )
+            .unwrap();
+        let (n, first): (i64, Option<i64>) = archive
+            .db
+            .query_row("SELECT n,first_ns FROM entry_total", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!((n, first), (4, Some(50)));
+        // Aprirlo di nuovo non cambia niente.
+        drop(archive);
+        let again = Archive::open(&path).unwrap();
+        let n: i64 = again
+            .db
+            .query_row("SELECT n FROM entry_total", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 4);
     }
 }

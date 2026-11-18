@@ -1,0 +1,1399 @@
+
+Lightweight Event Manager — terminal log collection and search
+
+Usage: loglem [OPTIONS] [COMMAND]
+
+Commands:
+  diagnostics        Read persistent Loglem errors, cause chains, and stack traces
+  web                Raccoglie i log e apre l'interfaccia web (se il servizio è attivo, ne mostra l'indirizzo)
+  tui                Open the keyboard-driven terminal interface (also the default)
+  init               Create an empty configuration
+  add                Aggiungi un log con il percorso guidato (cosa, chi, dove, riepilogo)
+  site               Create, list or inspect sites and projects
+  source             Configure sources without opening an interface
+  podman-list        List Podman containers and their pods
+  discover           Cerca i log nelle configurazioni dei programmi conosciuti (src/recipes)
+  docker-list        Elenca i container Docker
+  kubernetes-list    Elenca i pod di Kubernetes in tutti i namespace
+  status             Show archive locations, sizes, dates, and collection status
+  collect            Collect once and enforce archive retention
+  check              Controlla che Loglem giri e che le sorgenti vengano lette. Esce con codice 1 se c'è un problema: utilizzabile da cron, systemd o un programma di monitoraggio
+  tail               Mostra le righe nuove appena arrivano (in locale, o da un altro computer con --server)
+  backup             Copia coerente di configurazione e archivi in una cartella nuova
+  backup-verify      Verifica un backup: impronte, integrità SQLite, righe. Esce con codice 1 se non è valido
+  restore            Ripristina un backup verificato (Loglem deve essere fermo)
+  erase              Cancella i dati di una persona (GDPR art. 17) da tutte le sorgenti. Senza --apply mostra solo quante righe toccherebbe. Non tocca i file originali né i backup
+  export             Esporta i dati di una persona (GDPR art. 15) in un file di testo o JSON
+  audit              Chi ha cercato, esportato o cancellato, e quando (ultimi giorni)
+  stats              Statistiche di un log di accesso: richieste per giorno, pagine, codici, IP, lentezza
+  advice             Cosa c'è nel log di una sorgente (IP, email, credenziali…) e cosa Loglem ti suggerisce, con i riferimenti di legge. Sono suggerimenti: verificali
+  proof              Modalità prova: sigillo giornaliero con impronte concatenate e verifica
+  privacy            Dati personali: mascheramento degli IP, campi JSON da tenere, rapporto
+  alerts             Allarmi: regole, comando di notifica, «segna come visto»
+  access             Accesso alla pagina web da altri computer: utenti e indirizzo
+  serve              Servizio: raccoglie i log e serve l'interfaccia web finché non riceve SIGINT o SIGTERM
+  search             Literal, case-sensitive text search; dates are UTC unless a timezone is supplied
+  prune              Preview expired entries, or delete them with --apply
+  archive-completed  Archive a file explicitly handed off by a producer that has CLOSED it
+  config             
+  service            
+  update             
+  self-check         Test the executable and embedded SQLite schema without changing user data
+  help               Print this message or the help of the given subcommand(s)
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+  -V, --version              Print version
+
+@@
+add
+Aggiungi un log con il percorso guidato: cosa vuoi aggiungere, chi lo fa funzionare, dove sono i log, riepilogo. Serve un terminale interattivo
+
+Usage: loglem add [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+diagnostics
+Read persistent Loglem errors, cause chains, and stack traces
+
+Usage: loglem diagnostics [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+web
+Raccoglie i log e apre l'interfaccia web (se il servizio è attivo, ne mostra l'indirizzo)
+
+Usage: loglem web [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+tui
+Open the keyboard-driven terminal interface (also the default)
+
+Usage: loglem tui [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+init
+Create an empty configuration
+
+Usage: loglem init [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+site
+Create, list or inspect sites and projects
+
+Usage: loglem site [OPTIONS] <COMMAND>
+
+Commands:
+  add         
+  list        
+  show        
+  rename      Cambia il nome di un sito (i log restano collegati)
+  remove      Elimina un sito vuoto, oppure con --with-logs anche i suoi log e il loro storico
+  copies      Count original locations and archives, and compare collected samples
+  duplicates  Compare the latest 200 rows per source. Include local files and services with --external
+  help        Print this message or the help of the given subcommand(s)
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+site add
+Usage: loglem site add [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+site list
+Usage: loglem site list [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+site show
+Usage: loglem site show [OPTIONS] <ID>
+
+Arguments:
+  <ID>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+site rename
+Cambia il nome di un sito. I log restano collegati
+
+Usage: loglem site rename [OPTIONS] <SITE> <NAME>
+
+Arguments:
+  <SITE>  Identificatore o nome attuale del sito
+  <NAME>  Il nuovo nome
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+site remove
+Elimina un sito. Se ha dei log serve --with-logs: toglie anche i log e il loro storico (chiede conferma)
+
+Usage: loglem site remove [OPTIONS] <SITE>
+
+Arguments:
+  <SITE>  Identificatore o nome del sito
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+      --with-logs            Elimina anche i log del sito e il loro storico
+  -h, --help                 Print help
+
+@@
+site copies
+Count original locations and archives, and compare collected samples
+
+Usage: loglem site copies [OPTIONS] <ID>
+
+Arguments:
+  <ID>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+site duplicates
+Compare the latest 200 rows per source. Include local files and services with --external
+
+Usage: loglem site duplicates [OPTIONS] <ID>
+
+Arguments:
+  <ID>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+      --external             
+  -h, --help                 Print help
+
+@@
+source
+Configure sources without opening an interface
+
+Usage: loglem source [OPTIONS] <COMMAND>
+
+Commands:
+  assign-site     Assign a source to a site. Omit the site to clear the assignment
+  configure       Change display name, calendar retention, archive location, or source connection
+  rename          
+  pause           
+  resume          
+  detach          
+  remove          Elimina una sorgente in pausa o scollegata, con tutto il suo storico
+  add-folder      
+  add-file        
+  add-journal     Journal di systemd, eventualmente solo alcuni servizi o programmi
+  add-docker      Container Docker (nome o identificativo)
+  add-kubernetes  Kubernetes: un pod (--pod) oppure i pod con un'etichetta (--selector app=web), che continua a funzionare quando i pod vengono ricreati
+  add-podman      
+  list            
+  set             
+  help            Print this message or the help of the given subcommand(s)
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+source assign-site
+Assign a source to a site. Omit the site to clear the assignment
+
+Usage: loglem source assign-site [OPTIONS] <NAME> [SITE]
+
+Arguments:
+  <NAME>  
+  [SITE]  [default: ""]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+source configure
+Change display name, calendar retention, archive location, or source connection
+
+Usage: loglem source configure [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>  
+
+Options:
+      --data-dir <DATA_DIR>
+          [env: LOGLEM_DATA_DIR=]
+      --label <LABEL>
+          
+      --amount <AMOUNT>
+          
+      --unit <UNIT>
+          [possible values: days, months, years]
+      --log-kind <LOG_KIND>
+          [possible values: access, application, database, admin-access, system, other, error]
+      --archive-dir <ARCHIVE_DIR>
+          
+      --completed-dir <COMPLETED_DIR>
+          
+      --handoff-confirmed
+          
+      --remove-rotated <REMOVE_ROTATED>
+          true: elimina i file ruotati dopo averli archiviati e verificati (es. Caddy) [possible values: true, false]
+      --path <PATH>
+          
+      --container <CONTAINER>
+          
+      --connection <CONNECTION>
+          
+  -h, --help
+          Print help
+
+@@
+source rename
+Usage: loglem source rename [OPTIONS] <NAME> <LABEL>
+
+Arguments:
+  <NAME>   
+  <LABEL>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+source pause
+Usage: loglem source pause [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+source resume
+Usage: loglem source resume [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+source detach
+Usage: loglem source detach [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+source remove
+Elimina una sorgente in pausa o scollegata, con tutto il suo storico
+
+Usage: loglem source remove [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+source add-folder
+Usage: loglem source add-folder [OPTIONS] --name <NAME> --path <PATH>
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+      --site <SITE>          Site name or identifier [default: ""]
+      --name <NAME>          
+      --path <PATH>          
+      --days <DAYS>          [default: 28]
+  -h, --help                 Print help
+
+@@
+source add-file
+Usage: loglem source add-file [OPTIONS] --name <NAME> --path <PATH>
+
+Options:
+      --data-dir <DATA_DIR>                [env: LOGLEM_DATA_DIR=]
+      --site <SITE>                        Site name or identifier [default: ""]
+      --name <NAME>                        
+      --path <PATH>                        
+      --days <DAYS>                        [default: 28]
+      --rotated-pattern <ROTATED_PATTERN>  
+  -h, --help                               Print help
+
+@@
+source add-journal
+Journal di systemd, eventualmente solo alcuni servizi o programmi
+
+Usage: loglem source add-journal [OPTIONS] --name <NAME>
+
+Options:
+      --data-dir <DATA_DIR>       [env: LOGLEM_DATA_DIR=]
+      --site <SITE>               Site name or identifier [default: ""]
+      --name <NAME>               
+      --unit <UNITS>              Servizio systemd da leggere (ripetibile), es. --unit caddy.service
+      --identifier <IDENTIFIERS>  Programma syslog da leggere (ripetibile), es. --identifier sshd
+      --match <MATCHES>           Campo del journal da confrontare (ripetibile), es. --match CONTAINER_NAME=web
+      --container <CONTAINER>     Un container Podman per nome: continua anche quando viene ricreato
+      --priority <PRIORITY>       Solo voci fino a questa gravità: 0 emergenza … 3 errore … 7 debug
+      --days <DAYS>               [default: 28]
+  -h, --help                      Print help
+
+
+@@
+source add-docker
+Container Docker (nome o identificativo)
+
+Usage: loglem source add-docker [OPTIONS] --name <NAME> --container <CONTAINER>
+
+Options:
+      --data-dir <DATA_DIR>    [env: LOGLEM_DATA_DIR=]
+      --site <SITE>            Site name or identifier [default: ""]
+      --name <NAME>            
+      --container <CONTAINER>  
+      --context <CONTEXT>      
+      --days <DAYS>            [default: 28]
+  -h, --help                   Print help
+
+@@
+source add-kubernetes
+Kubernetes: un pod (--pod) oppure i pod con un'etichetta (--selector app=web), che continua a funzionare quando i pod vengono ricreati
+
+Usage: loglem source add-kubernetes [OPTIONS] --name <NAME> --namespace <NAMESPACE>
+
+Options:
+      --data-dir <DATA_DIR>    [env: LOGLEM_DATA_DIR=]
+      --site <SITE>            Site name or identifier [default: ""]
+      --name <NAME>            
+      --namespace <NAMESPACE>  
+      --pod <POD>              
+      --selector <SELECTOR>    
+      --container <CONTAINER>  
+      --context <CONTEXT>      
+      --days <DAYS>            [default: 28]
+  -h, --help                   Print help
+
+@@
+source add-podman
+Usage: loglem source add-podman [OPTIONS] --name <NAME> --container <CONTAINER>
+
+Options:
+      --data-dir <DATA_DIR>      [env: LOGLEM_DATA_DIR=]
+      --site <SITE>              Site name or identifier [default: ""]
+      --name <NAME>              
+      --container <CONTAINER>    
+      --days <DAYS>              [default: 28]
+      --connection <CONNECTION>  
+  -h, --help                     Print help
+
+@@
+source list
+Usage: loglem source list [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+source set
+Usage: loglem source set [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+      --days <DAYS>          
+      --enabled <ENABLED>    [possible values: true, false]
+  -h, --help                 Print help
+
+@@
+podman-list
+List Podman containers and their pods
+
+Usage: loglem podman-list [OPTIONS]
+
+Options:
+      --connection <CONNECTION>  
+      --data-dir <DATA_DIR>      [env: LOGLEM_DATA_DIR=]
+  -h, --help                     Print help
+
+@@
+discover
+Cerca i log nelle configurazioni dei programmi conosciuti (src/recipes)
+
+Usage: loglem discover [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+docker-list
+Elenca i container Docker
+
+Usage: loglem docker-list [OPTIONS]
+
+Options:
+      --context <CONTEXT>    
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+kubernetes-list
+Elenca i pod di Kubernetes in tutti i namespace
+
+Usage: loglem kubernetes-list [OPTIONS]
+
+Options:
+      --context <CONTEXT>    
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+status
+Show archive locations, sizes, dates, and collection status
+
+Usage: loglem status [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+      --json                 
+  -h, --help                 Print help
+
+@@
+collect
+Collect once and enforce archive retention
+
+Usage: loglem collect [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+check
+Controlla che Loglem giri e che le sorgenti vengano lette. Esce con codice 1 se c'è un problema: utilizzabile da cron, systemd o un programma di monitoraggio
+
+Usage: loglem check [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+      --minutes <MINUTES>    Una sorgente senza letture riuscite da più minuti di così è segnalata [default: 15]
+  -h, --help                 Print help
+
+@@
+tail
+Mostra le righe nuove appena arrivano (in locale, o da un altro computer con --server)
+
+Usage: loglem tail [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>
+          [env: LOGLEM_DATA_DIR=]
+
+      --source <SOURCE>
+          Solo questa sorgente
+
+      --text <TEXT>
+          Testo da cercare (vuoto = tutto)
+          
+          [default: ""]
+
+      --ignore-case
+          Non distinguere maiuscole e minuscole
+
+      --level <LEVEL>
+          Solo righe di questa gravità o più gravi
+
+          Possible values:
+          - error:   Errori e più gravi
+          - warning: Avvisi, errori e più gravi
+
+      --ip <IP>
+          Solo righe che contengono questo indirizzo IP
+
+      --path <PATH>
+          Solo richieste a questo percorso (es. /login)
+
+      --status <STATUS>
+          Solo risposte con questo codice (es. 404)
+
+      --server <SERVER>
+          Indirizzo della pagina web del server, es. http://10.0.0.1:8790
+
+      --user <USER>
+          Utente con cui entrare nel server (la password viene chiesta)
+
+      --history <HISTORY>
+          Quante righe recenti mostrare prima della diretta (solo in locale)
+          
+          [default: 10]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+@@
+backup
+Copia coerente di configurazione e archivi in una cartella nuova
+
+Usage: loglem backup [OPTIONS] <TARGET>
+
+Arguments:
+  <TARGET>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+backup-verify
+Verifica un backup: impronte, integrità SQLite, righe. Esce con codice 1 se non è valido
+
+Usage: loglem backup-verify [OPTIONS] <TARGET>
+
+Arguments:
+  <TARGET>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+restore
+Ripristina un backup verificato (Loglem deve essere fermo)
+
+Usage: loglem restore [OPTIONS] <TARGET>
+
+Arguments:
+  <TARGET>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+      --replace              Sostituisce i dati attuali
+  -h, --help                 Print help
+
+@@
+erase
+Cancella i dati di una persona (GDPR art. 17) da tutte le sorgenti. Senza --apply mostra solo quante righe toccherebbe. Non tocca i file originali né i backup
+
+Usage: loglem erase [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>
+          [env: LOGLEM_DATA_DIR=]
+
+      --source <SOURCE>
+          
+
+      --text <TEXT>
+          Testo da cercare (vuoto = tutto)
+          
+          [default: ""]
+
+      --ignore-case
+          Non distinguere maiuscole e minuscole
+
+      --level <LEVEL>
+          Solo righe di questa gravità o più gravi
+
+          Possible values:
+          - error:   Errori e più gravi
+          - warning: Avvisi, errori e più gravi
+
+      --ip <IP>
+          Solo righe che contengono questo indirizzo IP
+
+      --path <PATH>
+          Solo richieste a questo percorso (es. /login)
+
+      --status <STATUS>
+          Solo risposte con questo codice (es. 404)
+
+      --reason <REASON>
+          Perché si cancella, per il registro (es. «richiesta art. 17 del 17/11/2026, pratica 3»)
+
+      --originals
+          Cancella anche dai file originali (solo file finiti e già archiviati)
+
+      --apply
+          Esegue davvero la cancellazione
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+@@
+export
+Esporta i dati di una persona (GDPR art. 15) in un file di testo o JSON
+
+Usage: loglem export [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>
+          [env: LOGLEM_DATA_DIR=]
+
+      --source <SOURCE>
+          
+
+      --text <TEXT>
+          Testo da cercare (vuoto = tutto)
+          
+          [default: ""]
+
+      --ignore-case
+          Non distinguere maiuscole e minuscole
+
+      --level <LEVEL>
+          Solo righe di questa gravità o più gravi
+
+          Possible values:
+          - error:   Errori e più gravi
+          - warning: Avvisi, errori e più gravi
+
+      --ip <IP>
+          Solo righe che contengono questo indirizzo IP
+
+      --path <PATH>
+          Solo richieste a questo percorso (es. /login)
+
+      --status <STATUS>
+          Solo risposte con questo codice (es. 404)
+
+      --output <OUTPUT>
+          File da creare (solo il proprietario lo legge). Senza, scrive a video
+
+      --json
+          
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+@@
+audit
+Chi ha cercato, esportato o cancellato, e quando (ultimi giorni)
+
+Usage: loglem audit [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+      --days <DAYS>          [default: 30]
+  -h, --help                 Print help
+
+@@
+stats
+Statistiche di un log di accesso: richieste per giorno, pagine, codici, IP, lentezza
+
+Usage: loglem stats [OPTIONS] <SOURCE>
+
+Arguments:
+  <SOURCE>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+      --days <DAYS>          [default: 7]
+      --json                 
+  -h, --help                 Print help
+
+@@
+advice
+Cosa c'è nel log di una sorgente (IP, email, credenziali…) e cosa Loglem ti suggerisce, con i riferimenti di legge. Sono suggerimenti: verificali
+
+Usage: loglem advice [OPTIONS] <SOURCE>
+
+Arguments:
+  <SOURCE>  
+
+Options:
+      --apply <APPLY>        Applica la proposta di un suggerimento (es. --apply ip)
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+      --choose <CHOOSE>      Registra una scelta: ID=done, ID=declined, ID=later o ID=reopen (es. --choose notice=done)
+      --json                 
+  -h, --help                 Print help
+
+@@
+proof
+Modalità prova: sigillo giornaliero con impronte concatenate e verifica
+
+Usage: loglem proof [OPTIONS] <COMMAND>
+
+Commands:
+  enable   Attiva la modalità prova per una sorgente
+  disable  Disattiva la modalità prova (il registro già scritto resta)
+  verify   Verifica i giorni sigillati. Con --archive e --chain verifica una copia
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+proof enable
+Attiva la modalità prova per una sorgente
+
+Usage: loglem proof enable [OPTIONS] <SOURCE>
+
+Arguments:
+  <SOURCE>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+      --tsa <TSA>            Autorità di marca temporale RFC 3161, es. https://freetsa.org/tsr
+  -h, --help                 Print help
+
+@@
+proof disable
+Disattiva la modalità prova (il registro già scritto resta)
+
+Usage: loglem proof disable [OPTIONS] <SOURCE>
+
+Arguments:
+  <SOURCE>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+proof verify
+Verifica i giorni sigillati. Con --archive e --chain verifica una copia
+
+Usage: loglem proof verify [OPTIONS] [SOURCE]
+
+Arguments:
+  [SOURCE]  
+
+Options:
+      --archive <ARCHIVE>    
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+      --chain <CHAIN>        
+  -h, --help                 Print help
+
+@@
+privacy
+Dati personali: mascheramento degli IP, campi JSON da tenere, rapporto
+
+Usage: loglem privacy [OPTIONS] <COMMAND>
+
+Commands:
+  set     Imposta le tutele di una sorgente. --mask-ips-after-days 0 = subito; vuoto = mai
+  report  Cosa si conserva, per quanto e con quali tutele (per il registro delle conservazioni)
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+privacy set
+Imposta le tutele di una sorgente. --mask-ips-after-days 0 = subito; vuoto = mai
+
+Usage: loglem privacy set [OPTIONS] <SOURCE>
+
+Arguments:
+  <SOURCE>  
+
+Options:
+      --data-dir <DATA_DIR>
+          [env: LOGLEM_DATA_DIR=]
+      --mask-ips-after-days <MASK_IPS_AFTER_DAYS>
+          
+      --no-mask
+          Smette di mascherare gli IP
+      --keep-fields <KEEP_FIELDS>
+          Campi JSON da tenere, separati da virgola (es. request.uri,status). Vuoto = tutti
+  -h, --help
+          Print help
+
+@@
+privacy report
+Cosa si conserva, per quanto e con quali tutele (per il registro delle conservazioni)
+
+Usage: loglem privacy report [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+alerts
+Allarmi: regole, comando di notifica, «segna come visto»
+
+Usage: loglem alerts [OPTIONS] <COMMAND>
+
+Commands:
+  list            Elenca regole, comando di notifica e problemi attuali con il loro nome
+  monitor         Mostra o cambia il controllo automatico (acceso/spento, ogni quanti minuti)
+  email-set       Attiva gli avvisi per mail con Resend (la chiave si legge dalla tastiera)
+  email-test      Manda una mail di prova
+  email-off       Spegne gli avvisi per mail e cancella la chiave
+  email-show      Mostra come sono configurati gli avvisi per mail (mai la chiave)
+  add-pattern     Allarme se un testo compare almeno COUNT volte in MINUTES minuti
+  add-size        Allarme se l'archivio supera MEGABYTES
+  add-free-space  Allarme se sul disco dei dati restano meno di MEGABYTES liberi
+  remove          
+  command         Comando da eseguire quando i problemi cambiano (riceve LOGLEM_ALERTS). Vuoto = nessuno
+  seen            Segna un problema come visto (il nome si legge con «alerts list»)
+  help            Print this message or the help of the given subcommand(s)
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+alerts list
+Elenca regole, comando di notifica e problemi attuali con il loro nome
+
+Usage: loglem alerts list [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+alerts add-pattern
+Allarme se un testo compare almeno COUNT volte in MINUTES minuti
+
+Usage: loglem alerts add-pattern [OPTIONS] --text <TEXT> --count <COUNT> --minutes <MINUTES> <NAME>
+
+Arguments:
+  <NAME>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+      --text <TEXT>          
+      --count <COUNT>        
+      --minutes <MINUTES>    
+      --source <SOURCE>      
+  -h, --help                 Print help
+
+@@
+alerts add-size
+Allarme se l'archivio supera MEGABYTES
+
+Usage: loglem alerts add-size [OPTIONS] --megabytes <MEGABYTES> <NAME>
+
+Arguments:
+  <NAME>  
+
+Options:
+      --data-dir <DATA_DIR>    [env: LOGLEM_DATA_DIR=]
+      --megabytes <MEGABYTES>  
+      --source <SOURCE>        
+  -h, --help                   Print help
+
+@@
+alerts add-free-space
+Allarme se sul disco dei dati restano meno di MEGABYTES liberi
+
+Usage: loglem alerts add-free-space [OPTIONS] --megabytes <MEGABYTES> <NAME>
+
+Arguments:
+  <NAME>  
+
+Options:
+      --data-dir <DATA_DIR>    [env: LOGLEM_DATA_DIR=]
+      --megabytes <MEGABYTES>  
+  -h, --help                   Print help
+
+@@
+alerts remove
+Usage: loglem alerts remove [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+alerts monitor
+Mostra o cambia il controllo automatico che Loglem fa da solo, senza cron
+
+Usage: loglem alerts monitor [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+      --on                   Accende il controllo
+      --off                  Spegne il controllo
+      --every <MINUTES>      Ogni quanti minuti (da 1 a 1440, di solito 5)
+  -h, --help                 Print help
+
+@@
+alerts email-set
+Attiva gli avvisi per mail con Resend. La chiave si legge dalla tastiera (oppure da LOGLEM_RESEND_KEY)
+
+Usage: loglem alerts email-set [OPTIONS] --from <FROM> --to <TO>
+
+Options:
+      --data-dir <DATA_DIR>          [env: LOGLEM_DATA_DIR=]
+      --from <FROM>                  Mittente, per esempio noreply@tuodominio.it
+      --to <TO>                      Chi riceve gli avvisi (fino a 5 indirizzi, separati da virgola)
+      --page-url <PAGE_URL>          Indirizzo della pagina di Loglem da scrivere nella mail
+      --hourly-limit <HOURLY_LIMIT>  Al massimo quante mail all'ora [default: 6]
+  -h, --help                         Print help
+
+@@
+alerts email-test
+Manda una mail di prova
+
+Usage: loglem alerts email-test [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+alerts email-off
+Spegne gli avvisi per mail e cancella la chiave
+
+Usage: loglem alerts email-off [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+alerts email-show
+Mostra come sono configurati gli avvisi per mail (mai la chiave)
+
+Usage: loglem alerts email-show [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+alerts command
+Comando da eseguire quando i problemi cambiano (riceve LOGLEM_ALERTS). Vuoto = nessuno
+
+Usage: loglem alerts command [OPTIONS] <COMMAND>
+
+Arguments:
+  <COMMAND>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+alerts seen
+Segna un problema come visto (il nome si legge con «alerts list»)
+
+Usage: loglem alerts seen [OPTIONS] <ID>
+
+Arguments:
+  <ID>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+access
+Accesso alla pagina web da altri computer: utenti e indirizzo
+
+Usage: loglem access [OPTIONS] <COMMAND>
+
+Commands:
+  user-add     Crea un utente, o cambia password e ruolo di uno esistente. La password viene chiesta
+  user-remove  Elimina un utente; le sue sessioni aperte si chiudono subito
+  user-list    Elenca gli utenti
+  proxy        Pubblica la pagina dietro un reverse proxy (Caddy, Nginx…). Richiede almeno un utente
+  address      Dove ascoltare: «local» (solo questo computer), un IP di questo computer (es. quello della VPN) o 0.0.0.0. Vale dal prossimo avvio
+  help         Print this message or the help of the given subcommand(s)
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+access user-add
+Crea un utente, o cambia password e ruolo di uno esistente. La password viene chiesta
+
+Usage: loglem access user-add [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>
+          
+
+Options:
+      --data-dir <DATA_DIR>
+          [env: LOGLEM_DATA_DIR=]
+
+      --role <ROLE>
+          Possible values:
+          - admin:  Può fare tutto: aggiungere sorgenti, cambiare impostazioni
+          - reader: Può solo consultare: sorgenti, ricerca, diretta
+          
+          [default: admin]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+@@
+access user-remove
+Elimina un utente; le sue sessioni aperte si chiudono subito
+
+Usage: loglem access user-remove [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+access user-list
+Elenca gli utenti
+
+Usage: loglem access user-list [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+access proxy
+Pubblica la pagina dietro un reverse proxy (Caddy, Nginx…). Richiede almeno un utente
+
+Usage: loglem access proxy [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>    [env: LOGLEM_DATA_DIR=]
+      --trust <TRUST>          Indirizzo del proxy da cui accettare X-Forwarded-For/-Proto (ripetibile)
+      --base-path <BASE_PATH>  Prefisso se il proxy non lo toglie, es. /loglem. Vuoto = nessuno
+  -h, --help                   Print help
+
+@@
+access address
+Dove ascoltare: «local» (solo questo computer), un IP di questo computer (es. quello della VPN) o 0.0.0.0. Vale dal prossimo avvio
+
+Usage: loglem access address [OPTIONS] <ADDRESS>
+
+Arguments:
+  <ADDRESS>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+serve
+Servizio: raccoglie i log e serve l'interfaccia web finché non riceve SIGINT o SIGTERM
+
+Usage: loglem serve [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+search
+Literal, case-sensitive text search; dates are UTC unless a timezone is supplied
+
+Usage: loglem search [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>
+          [env: LOGLEM_DATA_DIR=]
+
+      --source <SOURCE>
+          
+
+      --text <TEXT>
+          Testo da cercare (vuoto = tutto)
+          
+          [default: ""]
+
+      --ignore-case
+          Non distinguere maiuscole e minuscole
+
+      --level <LEVEL>
+          Solo righe di questa gravità o più gravi
+
+          Possible values:
+          - error:   Errori e più gravi
+          - warning: Avvisi, errori e più gravi
+
+      --ip <IP>
+          Solo righe che contengono questo indirizzo IP
+
+      --path <PATH>
+          Solo richieste a questo percorso (es. /login)
+
+      --status <STATUS>
+          Solo risposte con questo codice (es. 404)
+
+      --from <FROM>
+          
+
+      --to <TO>
+          YYYY-MM-DD includes that entire day; a full timestamp is an exclusive upper bound
+
+      --limit <LIMIT>
+          [default: 100]
+
+      --json
+          
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+@@
+prune
+Preview expired entries, or delete them with --apply
+
+Usage: loglem prune [OPTIONS]
+
+Options:
+      --apply                
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+archive-completed
+Archive a file explicitly handed off by a producer that has CLOSED it
+
+Usage: loglem archive-completed [OPTIONS] --source <SOURCE> --file <FILE>
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+      --source <SOURCE>      
+      --file <FILE>          
+      --producer-closed      Required: the producer will never write to this file again
+      --remove               Remove the completed original only after byte-for-byte verification
+  -h, --help                 Print help
+
+@@
+config
+Usage: loglem config [OPTIONS] <COMMAND>
+
+Commands:
+  export    
+  import    
+  poll      
+  web-port  Porta locale fissa dell'interfaccia web (vale dal prossimo avvio)
+  help      Print this message or the help of the given subcommand(s)
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+config export
+Usage: loglem config export [OPTIONS] <OUTPUT>
+
+Arguments:
+  <OUTPUT>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+config import
+Usage: loglem config import [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+config poll
+Usage: loglem config poll [OPTIONS] <SECONDS>
+
+Arguments:
+  <SECONDS>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+config web-port
+Porta locale fissa dell'interfaccia web (vale dal prossimo avvio)
+
+Usage: loglem config web-port [OPTIONS] <PORT>
+
+Arguments:
+  <PORT>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+service
+Usage: loglem service [OPTIONS] <COMMAND>
+
+Commands:
+  install    Installa il servizio e il controllo automatico (nessun cron da aggiungere)
+  uninstall  Toglie il servizio (i dati restano)
+  start      
+  stop       
+  status     
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+service install
+Usage: loglem service install [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+      --start                
+  -h, --help                 Print help
+
+@@
+service uninstall
+Toglie il servizio: lo ferma, lo disabilita e cancella il file scritto da Loglem. I dati restano
+
+Usage: loglem service uninstall [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+service start
+Usage: loglem service start [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+service stop
+Usage: loglem service stop [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+service status
+Usage: loglem service status [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+update
+Usage: loglem update [OPTIONS] <COMMAND>
+
+Commands:
+  configure  
+  check      
+  install    
+  status     
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+update configure
+Usage: loglem update configure [OPTIONS] --repository <REPOSITORY> --public-key <PUBLIC_KEY>
+
+Options:
+      --data-dir <DATA_DIR>      [env: LOGLEM_DATA_DIR=]
+      --repository <REPOSITORY>  
+      --public-key <PUBLIC_KEY>  
+  -h, --help                     Print help
+
+@@
+update check
+Usage: loglem update check [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+update install
+Usage: loglem update install [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+update status
+Usage: loglem update status [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+self-check
+Test the executable and embedded SQLite schema without changing user data
+
+Usage: loglem self-check [OPTIONS]
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
+
+@@
+__apply-update
+Usage: loglem __apply-update [OPTIONS] <STAGE>
+
+Arguments:
+  <STAGE>  
+
+Options:
+      --data-dir <DATA_DIR>  [env: LOGLEM_DATA_DIR=]
+  -h, --help                 Print help
