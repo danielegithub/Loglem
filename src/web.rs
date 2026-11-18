@@ -524,6 +524,13 @@ fn audited(route: &str, body: &Value) -> Option<(&'static str, String)> {
         "/api/backup-create" | "/api/backup-transfer" => Some(("backup", route.to_owned())),
         "/api/config-import" => Some(("importa impostazioni", String::new())),
         "/api/update-install" => Some(("aggiornamento", String::new())),
+        "/api/site-assign" => Some((
+            "assegna log",
+            body.get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+        )),
         "/api/site-add" => Some(("nuovo sito", String::new())),
         "/api/wizard-save" => Some((
             "nuove sorgenti",
@@ -833,6 +840,22 @@ fn live(app: &App) -> Result<Value> {
 fn api(route: &str, app: &App, body: Value) -> Result<Value> {
     let dir = &app.dir;
     match route {
+        "/api/site-assign" => {
+            let _access = util::DataAccess::read(dir)?;
+            let site = text(&body, "site")?;
+            let name = text(&body, "name")?;
+            config::edit(dir, |cfg| {
+                anyhow::ensure!(cfg.sites.contains_key(site), "Destinazione sconosciuta");
+                cfg.sources
+                    .iter_mut()
+                    .find(|s| s.id == name)
+                    .context("Log sconosciuto")?
+                    .site = site.to_owned();
+                Ok(())
+            })?;
+            app.worker.request();
+            Ok(json!({"site":site}))
+        }
         "/api/site-add" => Ok(json!({"site":config::add_site(dir, text(&body, "name")?)?})),
         "/api/rules" => {
             let cfg = config::load(dir)?;

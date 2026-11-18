@@ -77,7 +77,7 @@ async function loadRulesPage() {
     return [
       s.label || s.source,
       s.origin + ' · ' + s.archive,
-      state.sites[s.site]?.name || 'Senza sito',
+      state.sites[s.site]?.name || 'Log da sistemare',
       s.class || 'Individuale',
       rule?.reason || '—',
       periodText(sourcePeriod(s)),

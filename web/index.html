@@ -17,6 +17,13 @@
       <h2 id="session-title">Ricollega questa pagina</h2><p id="session-message"></p>
       <button id="retry-session" type="button" class="primary">Ricarica la pagina</button>
     </dialog>
+    <dialog id="assign-dialog" aria-labelledby="move-title">
+      <form id="move-log"><h2 id="move-title">Assegna il log</h2>
+        <p id="move-name"></p><label>Destinazione <select id="move-site" required></select></label>
+        <p>Lo storico e le impostazioni di raccolta restano disponibili nella nuova scheda.</p>
+        <button type="submit" class="primary">Assegna</button> <button type="button" data-close>Chiudi</button>
+      </form>
+    </dialog>
     <aside class="sidebar">
       <a class="brand" href="#sources">
         <span class="brand-icon">L</span>
@@ -24,7 +31,7 @@
       </a>
       <p class="nav-label">MENU</p>
       <nav aria-label="Navigazione principale">
-        <a href="#sources" data-nav="sources"><span aria-hidden="true">◫</span> Siti</a>
+        <a href="#sources" data-nav="sources"><span aria-hidden="true">◫</span> Siti e server</a>
         <a href="#logs" data-nav="logs"><span aria-hidden="true">≡</span> Esplora i log</a>
         <a href="#add" data-nav="add" class="admin-only"><span aria-hidden="true">＋</span> Aggiungi un log</a>
         <a href="#rules" data-nav="rules" class="admin-only"><span aria-hidden="true">▤</span> Regole e siti</a>
@@ -69,7 +76,7 @@
           <div id="card-alerts"><span>Avvisi aperti</span><strong id="open-alerts">—</strong></div>
         </div>
         <div class="section-heading">
-          <h2>Log per sito</h2>
+          <h2>I tuoi siti e il server</h2>
           <button id="collect" class="admin-only">↻ Leggi adesso</button>
         </div>
         <p class="muted" id="collection-status"></p>
@@ -88,7 +95,7 @@
       </section>
 
       <section data-view="site" hidden>
-        <a href="#sources" class="text-link">← Tutti i siti</a>
+        <a href="#sources" class="text-link">← Siti e server</a>
         <div id="site-actions" class="row site-actions"></div>
         <section id="site-storage" class="panel" hidden>
           <h2>Copie e doppioni</h2>
@@ -114,7 +121,7 @@
       <section id="view-logs" data-view="logs" hidden>
         <form id="search-form" class="panel filters">
           <div class="filter-dates">
-            <label>Sito <select id="search-site"><option value="">Tutti i siti</option></select></label>
+            <label>Sito o server <select id="search-site"><option value="">Tutti i gruppi</option></select></label>
             <label>Log <select id="search-source"><option value="">Tutte le sorgenti</option></select></label>
           </div>
           <div class="filter-main">
@@ -375,10 +382,12 @@
       <!-- Impostazioni della sorgente -->
       <section id="view-settings" data-view="settings" hidden>
         <div class="panel">
-          <a id="settings-back" href="#sources" class="text-link">← Tutti i siti</a>
+          <a id="settings-back" href="#sources" class="text-link">← Siti e server</a>
           <h2 id="settings-title">Impostazioni sorgente</h2>
+          <p id="settings-owner"></p>
+          <div id="settings-gaps" aria-live="polite"></div>
           <div id="settings-advice" class="advice" hidden></div>
-          <section class="source-lifecycle"><h3>Conservazione alla sorgente</h3><div id="settings-original-retention"></div></section>
+          <section id="settings-origin-panel" class="source-lifecycle"><h3>Quanto restano i log nel programma</h3><div id="settings-original-retention"></div></section>
           <form id="retention-form">
             <div class="field">
               <label for="settings-label">Nome visualizzato</label>

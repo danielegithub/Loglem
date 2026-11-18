@@ -7,8 +7,8 @@ const REFRESH_MS = 2000;
 const PAGES = {
   rules: ['Regole e siti', 'Gestisci le classi, le quote degli archivi e le assegnazioni.'],
   inventory: ['Mappa del server', 'Sorgenti visibili su questo server e collegamenti a Loglem.'],
-  sources: ['Siti e progetti', 'Apri un sito per vedere i suoi log.'],
-  site: ['Log del sito', ''],
+  sources: ['Siti e server', 'Ogni scheda raccoglie i log di un sito o del sistema.'],
+  site: ['Log del gruppo', ''],
   'new-site': ['Nuovo sito', 'Potrai collegare i log dopo aver scelto il nome.'],
   logs: ['Esplora i log', 'Scegli una sorgente, cerca una parola e filtra per data.'],
   add: ['Aggiungi un log', 'Cosa, chi, dove: ti guido un passo alla volta.'],
@@ -232,6 +232,34 @@ const LOG_KINDS = {
   admin_access: 'Accessi amministrativi', system: 'Sistema', other: 'Altro',
 };
 
+function assignLogButton(log) {
+  const button = element('button', log.site ? 'Sposta' : 'Assegna', 'admin-only');
+  button.type = 'button';
+  button.setAttribute('aria-label', button.textContent + ' ' + log.label);
+  button.onclick = () => {
+    $('move-name').textContent = 'Log selezionato · ' + log.label;
+    $('move-log').dataset.source = log.source;
+    $('move-site').replaceChildren(new Option('Scegli dove mostrarlo', ''), ...orderedSites()
+      .filter(site => site.id !== log.site).map(site => new Option(site.name, site.id)));
+    $('assign-dialog').showModal();
+  };
+  return button;
+}
+$('move-log').onsubmit = event => {
+  event.preventDefault();
+  perform(event.submitter, async () => {
+    const site = $('move-site').value;
+    await api('site-assign', {name: $('move-log').dataset.source, site});
+    $('assign-dialog').close();
+    await refresh(true);
+    location.hash = '#site/' + site;
+  });
+};
+for (const button of document.querySelectorAll('[data-close]')) button.onclick = () => button.closest('dialog').close();
+for (const dialog of document.querySelectorAll('dialog')) dialog.addEventListener('close', () => {
+  dialog.querySelector('p.card-error[role=alert]')?.remove();
+});
+
 function siteCard(site, logs) {
   const card = element('article', undefined, 'source-card');
   const header = element('div', undefined, 'card-heading');
@@ -243,14 +271,32 @@ function siteCard(site, logs) {
     s.gaps.some(gap => Date.now() - Date.parse(gap.to) < 86400000));
   let badge = ['Log aggiornati', ''];
   if (errors) badge = [errors + ' in errore', 'error'];
-  else if (!logs.length) badge = ['Da collegare', 'waiting'];
+  else if (!logs.length) badge = ['Nessun log', 'waiting'];
   else if (attention) badge = ['Da controllare', 'attention'];
   header.append(title, element('span', badge[0], 'badge ' + badge[1]));
-  card.append(header, element('p', logs.length + ' log'));
+  card.append(header);
+  if (site.id === '~') card.append(element('p', 'Scegli a quale sito o al server appartiene ciascun log.'));
+  if (site.id === 'server') card.append(element('p', 'Accessi al sistema, servizi e attività pianificate.'));
+  if (!logs.length) card.append(link('Aggiungi il primo log', '#add/' + site.id, 'button admin-only'));
+  else {
+    const list = element('ul', undefined, 'site-log-list');
+    for (const log of logs) {
+      const item = element('li');
+      item.append(link(log.label, (document.body.classList.contains('reader') ? '#logs/' : '#settings/') + log.source, 'text-link'), document.createTextNode(' · ' + (LOG_KINDS[log.log_kind] || 'Altro')));
+      if (site.id === '~') item.append(assignLogButton(log));
+      if (log.gaps?.length && Date.now() - Date.parse(log.gaps[0].to) < 86400000) {
+        item.append(element('small', 'Potrebbero mancare eventi. Apri il log per vedere il periodo.', 'card-warning'));
+      }
+      list.append(item);
+    }
+    card.append(list);
+  }
   // Un errore senza spiegazione non aiuta: quale log, perché, e dove guardare.
   for (const log of logs.filter(s => sourceError(s))) {
     const problem = element('div', undefined, 'card-error');
-    const reason = sourceError(log);
+    const raw = sourceError(log);
+    const reason = raw.includes('os error 2') && ['file','folder'].includes(log.input.kind)
+      ? 'Percorso non trovato. Controlla da dove leggere questo log.' : raw;
     problem.append(element('strong', (log.label || log.source) + ': '),
       document.createTextNode(reason.length > 160 ? reason.slice(0, 160) + '…' : reason + ' '));
     problem.append(link('Apri il log', '#settings/' + log.source, 'text-link'));
@@ -266,7 +312,6 @@ function siteCard(site, logs) {
   if (!document.body.classList.contains('reader')) {
     for (const log of logs.filter(log => log.entries)) card.append(adviceNote(log));
   }
-  if (site.id === '~') card.append(link('Assegna i log a un sito', '#rules', 'text-link admin-only'));
   return card;
 }
 
@@ -294,7 +339,7 @@ function siteLogRow(source) {
     status.append(element('small', message));
   }
   for (const gap of source.gaps.slice(0, 3)) {
-    status.append(element('small', 'Possibile lacuna · ' + formatDate(gap.from) + ' – ' + formatDate(gap.to) + ' · ' + gap.reason));
+    status.append(element('small', 'Potrebbero mancare eventi · ' + formatDate(gap.from) + ' – ' + formatDate(gap.to) + ' · ' + gap.reason, 'card-warning'));
   }
   const history = element('details');
   history.dataset.key = 'history-' + source.source;
@@ -302,6 +347,7 @@ function siteLogRow(source) {
     element('small', 'Prima riga · ' + formatDate(source.earliest)), element('small', source.message));
   status.append(history);
   const actions = element('div');
+  actions.append(assignLogButton(source));
   if (source.log_kind === 'access') actions.append(link('Statistiche', '#stats/' + source.source, 'text-link'));
   actions.append(link('Impostazioni', '#settings/' + source.source, 'text-link admin-only'));
   if (source.entries && !document.body.classList.contains('reader')) actions.append(adviceNote(source));
@@ -309,8 +355,8 @@ function siteLogRow(source) {
 }
 
 function renderSite(id) {
-  const site = id === '~' ? { name: 'Senza sito' } : Object.hasOwn(state.sites, id) && state.sites[id];
-  $('page-title').textContent = site ? site.name : 'Sito non trovato';
+  const site = id === '~' ? { name: 'Log da sistemare' } : Object.hasOwn(state.sites, id) && state.sites[id];
+  $('page-title').textContent = site ? site.name : 'Gruppo non trovato';
   document.title = 'Loglem · ' + $('page-title').textContent;
   const logs = state.sources.filter(s => s.site === (id === '~' ? '' : id));
   const signature = JSON.stringify([id, site, logs]);
@@ -327,8 +373,8 @@ function renderSite(id) {
   }
   actions.append(link('Aggiungi un log', id === '~' ? '#add' : '#add/' + id, 'button primary admin-only'));
   if (logs.length) {
-    actions.append(link('Cerca nei log del sito', '#logs/site/' + id));
-    tabulate('site-logs', ['Log e origine', 'Programma', 'Rotazione', 'Copie', 'Durata in Loglem', 'Stato', 'Azioni'], logs.map(siteLogRow));
+    actions.append(link('Cerca in questi log', '#logs/site/' + id));
+    tabulate('site-logs', ['Log e origine', 'Programma', 'Gestione dei vecchi file', 'Copie', 'Durata in Loglem', 'Stato', 'Azioni'], logs.map(siteLogRow));
     for (const detail of $('site-logs').querySelectorAll('details')) detail.open = opened.has(detail.dataset.key);
   } else {
     $('site-logs').append(element('p', 'Nessun log collegato.'));
@@ -390,7 +436,7 @@ function renderSources() {
     groups.get(source.site).push(source);
   }
   for (const site of orderedSites()) list.append(siteCard(site, groups.get(site.id) || []));
-  if (groups.has('')) list.append(siteCard({id: '~', name: 'Senza sito'}, groups.get('')));
+  if (groups.has('')) list.append(siteCard({id: '~', name: 'Log da sistemare'}, groups.get('')));
 }
 
 function sourceOptionLabel(source) {
@@ -447,12 +493,12 @@ function syncSourceSelect() {
   const previous = select.value;
   // Ricostruisce l'elenco solo se nomi o etichette sono cambiati.
   const sites = orderedSites();
-  if (state.sources.some(s => !s.site)) sites.push({ id: '~', name: 'Senza sito' });
+  if (state.sources.some(s => !s.site)) sites.push({ id: '~', name: 'Log da sistemare' });
   const site = $('search-site');
   const options = [...site.options].slice(1);
   if (sites.length !== options.length || sites.some((s, i) => s.id !== options[i].value || s.name !== options[i].text)) {
     const chosen = site.value;
-    site.replaceChildren(new Option('Tutti i siti', ''), ...sites.map(s => new Option(s.name, s.id)));
+    site.replaceChildren(new Option('Tutti i gruppi', ''), ...sites.map(s => new Option(s.name, s.id)));
     if (sites.some(s => s.id === chosen)) site.value = chosen;
   }
   const sources = state.sources.filter(s => !site.value || s.site === (site.value === '~' ? '' : site.value));
@@ -1225,7 +1271,7 @@ function route() {
     const siteSearch = id === 'site' && scope;
     if (siteSearch && ![...$('search-site').options].some(o => o.value === scope)) {
       $('search-results').replaceChildren();
-      $('result-count').textContent = 'Sito non trovato';
+      $('result-count').textContent = 'Gruppo non trovato';
       return;
     }
     if (id) {
@@ -1272,7 +1318,7 @@ function route() {
       ? settingsSource.label || settingsSource.source
       : 'Sorgente non trovata';
     $('settings-back').href = settingsSource ? '#site/' + (settingsSource.site || '~') : '#sources';
-    $('settings-back').textContent = settingsSource ? '← Torna al sito' : '← Tutti i siti';
+    $('settings-back').textContent = settingsSource ? '← ' + (state.sites[settingsSource.site]?.name || 'Log da sistemare') : '← Siti e server';
     if (settingsSource) populateSettings();
   } else if (view === 'rules' || view === 'system') {
     loadRulesPage().catch(e=>showNotice(e.message,true));
@@ -1364,10 +1410,12 @@ function updateStorage(prefix) {
 function populateSettings() {
   const s = settingsSource;
   const period = sourcePeriod(s);
-  $('settings-original-retention').replaceChildren(originalRetentionNote(s.input, s));
+  $('settings-owner').replaceChildren(document.createTextNode('Gruppo · ' + (state.sites[s.site]?.name || 'Log da sistemare') + ' '), assignLogButton(s));
   const isPodman = s.input.kind === 'podman';
   const hasFiles = s.input.kind === 'file' || s.input.kind === 'folder';
 
+  $('settings-origin-panel').hidden = hasFiles;
+  if (!hasFiles) $('settings-original-retention').replaceChildren(originalRetentionNote(s.input, s));
   $('settings-label').value = s.label || s.source;
   $('settings-kind').value = s.log_kind || 'application';
   $('retention-days').disabled = $('retention-unit').disabled = !!s.class;

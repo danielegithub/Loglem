@@ -342,7 +342,7 @@ function chosenProposals() {
 
 function renderSummary() {
   const target = add.site
-    ? 'I log vanno nel sito «' + state.sites[add.site].name + '».'
+    ? 'Troverai questi log in «' + state.sites[add.site].name + '».'
     : add.category.names_site
       ? 'I log vanno nel sito «' + add.name + '» (nuovo, se non esiste già).'
       : 'I log vanno in «Questo server».';

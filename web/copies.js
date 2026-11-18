@@ -4,7 +4,7 @@ let copyScope = '';
 let copyRequest = 0;
 let copyReport = null;
 let copySite = '';
-const locationKinds = { original: 'Originale', rotated: 'Ruotato', completed: 'File concluso',
+const locationKinds = { original: 'Originale', rotated: 'Vecchio file', completed: 'File chiuso dal programma',
   folder: 'Cartella', archive: 'Archivio Loglem', runtime: 'Container', journal: 'Journal' };
 
 function updateCopyScope(id, visible, logs) {
@@ -83,7 +83,7 @@ function copyLocations(source) {
     list.append(row);
   }
   details.append(list);
-  if (group.locations.some(loc => loc.kind === 'rotated')) details.append(element('small', 'I file ruotati contengono i periodi precedenti del log.'));
+  if (group.locations.some(loc => loc.kind === 'rotated')) details.append(element('small', 'Questi file contengono eventi precedenti a quelli del file in uso.'));
   // Per i file la spiegazione sta già nelle righe sopra; per container e journal serve la durata.
   if (source.input.kind !== 'file' && source.input.kind !== 'folder') {
     const retention = element('details');
@@ -147,7 +147,7 @@ function renderCopyMatches(report, external) {
       (scan.limited ? ' Raggiunto un limite della ricerca.' : '') +
       (scan.unavailable.length ? ' Non verificati · ' + scan.unavailable.join(', ') + '.' : '')));
   }
-  list.append(element('small', 'Il confronto usa fino a 200 righe recenti per sorgente e segnala una coincidenza oltre il 50%.'));
+  list.append(element('small', 'Confrontiamo fino a 200 righe recenti per log. Se coincide più della metà del campione più grande (per esempio 120 righe su 200), segnaliamo un possibile doppione.'));
 }
 
 document.addEventListener('DOMContentLoaded', () => {
