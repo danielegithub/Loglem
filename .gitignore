@@ -26,3 +26,5 @@ health.json
 *.chain
 *.tsa
 .env
+/note_mie.md
+/implementate.md
