@@ -227,9 +227,17 @@ fn read_source(
             if rotated_pattern.is_none() {
                 note_vanished_files(archive, &files, stopped_since, now)?;
             }
+            // Un file ruotato che non si legge non ferma gli altri, né il file attivo.
             let mut added = 0;
+            let mut errors = Vec::new();
             for file in files {
-                added += sources::file::collect_any(archive, &file, now)?;
+                match sources::file::collect_any(archive, &file, now) {
+                    Ok(count) => added += count,
+                    Err(error) => errors.push(format!("{}: {error:#}", file.display())),
+                }
+            }
+            if !errors.is_empty() {
+                bail!("{}", errors.join("\n"));
             }
             Ok(added)
         }
