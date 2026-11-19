@@ -803,7 +803,7 @@ pub(crate) fn command(path: &str, raw: Vec<OsString>) -> Result<Action> {
                 query: filters(&mut a)?,
                 from: a.option("--from")?,
                 to: a.option("--to")?,
-                limit: checked_limit(a.option("--limit")?.unwrap_or(100))?,
+                limit: checked_limit(a.option::<u64>("--limit")?.unwrap_or(100))?,
                 json: a.flag("--json"),
             });
             a.finish()?;

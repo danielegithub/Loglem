@@ -127,9 +127,9 @@ impl Options {
         Ok(())
     }
 }
-pub(crate) fn checked_limit(n: u16) -> Result<u16> {
+pub(crate) fn checked_limit(n: u64) -> Result<u16> {
     ensure!((1..=1000).contains(&n), "Il limite va da 1 a 1000");
-    Ok(n)
+    Ok(n as u16)
 }
 fn help(path: &str) -> Option<&'static str> {
     include_str!("cli_help.txt")

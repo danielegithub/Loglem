@@ -894,7 +894,7 @@ pub fn execute(dir: &std::path::Path, action: Action) -> Result<()> {
         Action::Discover => {
             let found = crate::discover::find_all();
             if found.is_empty() {
-                println!("Nessuna configurazione di Caddy, Nginx o Apache trovata.");
+                println!("Nessuna configurazione di programmi conosciuti trovata. Per container, servizi e altri log usa: loglem add");
             }
             for item in found {
                 let missing = if item.exists {

@@ -30,8 +30,8 @@ with tempfile.TemporaryDirectory() as tmp:
         db.executescript(schema.read_text())
         db.execute(
             """WITH RECURSIVE seq(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM seq WHERE i<5000000)
-                      INSERT INTO entries SELECT i,CAST(i AS TEXT),NULL,0,0,?1,?1,'event','fixture' FROM seq""",
-            (time.time_ns(),),
+                      INSERT INTO entries SELECT i,CAST(i AS TEXT),NULL,0,0,:now,:now,'event','fixture' FROM seq""",
+            {"now": time.time_ns()},
         )
     service = subprocess.Popen([*cli, "web"], stdout=subprocess.PIPE, text=True)
     try:
