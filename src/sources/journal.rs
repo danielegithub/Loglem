@@ -76,6 +76,9 @@ impl Filter {
     pub(crate) fn apply(&self, command: &mut Command) {
         for unit in &self.units {
             command.arg(format!("--unit={unit}"));
+            // I servizi utente (`systemctl --user`, Podman rootless come unità utente)
+            // si registrano in un campo diverso: le due opzioni si sommano.
+            command.arg(format!("--user-unit={unit}"));
         }
         for identifier in &self.identifiers {
             command.arg(format!("--identifier={identifier}"));
@@ -141,18 +144,23 @@ const GAP_CHECKED: &str = "journal_gap_checked";
 
 /// Servizi presenti nel journal, per proporli nella scelta guidata.
 pub fn units() -> Result<Vec<String>> {
-    let data = process::output(
-        journalctl().args(["--field=_SYSTEMD_UNIT", "--no-pager"]),
-        Duration::from_secs(20),
-    )
-    .context("Non riesco a leggere il journal: journalctl è installato?")?;
-    let mut units: Vec<String> = String::from_utf8_lossy(&data)
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .map(str::to_owned)
-        .collect();
+    let mut units: Vec<String> = Vec::new();
+    for field in ["_SYSTEMD_UNIT", "_SYSTEMD_USER_UNIT"] {
+        let data = process::output(
+            journalctl().arg(format!("--field={field}")).arg("--no-pager"),
+            Duration::from_secs(20),
+        )
+        .context("Non riesco a leggere il journal: journalctl è installato?")?;
+        units.extend(
+            String::from_utf8_lossy(&data)
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(str::to_owned),
+        );
+    }
     units.sort();
+    units.dedup();
     Ok(units)
 }
 
@@ -388,6 +396,7 @@ fn selected(f: &Filter, row: &Value) -> bool {
                     .is_some_and(|v| pattern.as_ref().is_some_and(|p| p.matches(v)))
             };
             matched("_SYSTEMD_UNIT")
+                || matched("_SYSTEMD_USER_UNIT")
                 || (has("_PID", "1") && matched("UNIT"))
                 || (has("_UID", "0")
                     && (matched("OBJECT_SYSTEMD_UNIT") || matched("COREDUMP_UNIT")))
