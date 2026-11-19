@@ -55,6 +55,8 @@ loglem service status
 loglem check                      # exit code 1 if something is wrong
 ```
 
+The service is a user unit of systemd. On a server, run `loginctl enable-linger USER` once, so it starts at boot and keeps running after you close SSH. `loglem service install` tells you when this is needed.
+
 The service restarts itself after a crash. On a clean stop it reads every source one last time. See [stopping.md](stopping.md) for what happens while Loglem is off.
 
 The service also runs the automatic check (every 5 minutes, no cron needed). The Sites page and **System → Service** show whether it is running, since when, and how many times it restarted. To remove the service: `loglem service uninstall`. Your data stays.

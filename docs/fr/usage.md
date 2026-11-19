@@ -55,6 +55,8 @@ loglem service status
 loglem check                      # code de sortie 1 si quelque chose ne va pas
 ```
 
+Le service est une unité utilisateur de systemd. Sur un serveur, exécutez une fois `loginctl enable-linger UTILISATEUR` pour qu'il démarre avec la machine et continue après la fermeture de SSH. `loglem service install` vous le dit quand c'est nécessaire.
+
 Le service redémarre seul après un plantage. À un arrêt normal, il lit chaque source une dernière fois. Ce qui se passe quand Loglem est éteint : [stopping.md](stopping.md).
 
 Le service fait aussi le contrôle automatique (toutes les 5 minutes, sans cron). La page Sites et **Système → Service** montrent s'il tourne, depuis quand et combien de fois il a redémarré. Pour le retirer : `loglem service uninstall`. Les données restent.

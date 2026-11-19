@@ -1689,9 +1689,7 @@ fn service_menu(dir: &Path) -> Result<()> {
     if choice == 0 {
         let report = crate::service::install(dir, true)?;
         let text = format!(
-            "Fatto. Il servizio raccoglie i log e mostra la pagina web.\n{}\n\n{}\n\n\
-             Per farlo partire all'accensione anche senza login, un amministratore\n\
-             deve abilitare il «lingering» dell'utente (vedi il README).",
+            "Fatto. Il servizio raccoglie i log e mostra la pagina web.\n{}\n\n{}",
             web_address_text(dir)?,
             report.text()
         );
@@ -1710,8 +1708,7 @@ fn service_menu(dir: &Path) -> Result<()> {
     };
     cli::execute(dir, Action::Service { action })?;
     let text = format!(
-        "Fatto.\n{}\n\nPer farlo partire all'accensione anche senza login, un amministratore\n\
-         deve abilitare il «lingering» dell'utente (vedi il README).",
+        "Fatto.\n{}",
         web_address_text(dir)?
     );
     page("Raccolta automatica", &text)

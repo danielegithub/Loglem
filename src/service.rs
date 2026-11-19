@@ -69,18 +69,47 @@ pub struct Report {
     pub file: PathBuf,
     pub manager: &'static str,
     pub check_minutes: u32,
+    /// Solo su Linux: `Some(false)` se l'utente non ha il «lingering» (il servizio non parte
+    /// all'accensione e si ferma quando esce l'ultima sessione).
+    pub linger: Option<bool>,
+}
+
+/// Il servizio è un'unità utente di systemd: senza «lingering» esiste solo mentre l'utente
+/// ha una sessione aperta.
+fn lingering() -> Option<bool> {
+    if cfg!(target_os = "macos") {
+        return None;
+    }
+    let user = std::env::var("USER").ok().filter(|u| !u.is_empty())?;
+    let output = Command::new("loginctl")
+        .args(["show-user", &user, "--property=Linger", "--value"])
+        .output()
+        .ok()?;
+    match String::from_utf8_lossy(&output.stdout).trim() {
+        "yes" => Some(true),
+        "no" => Some(false),
+        _ => None,
+    }
 }
 
 impl Report {
     pub fn text(&self) -> String {
-        format!(
+        let mut text = format!(
             "Servizio installato ({}): {}\n\
              Controllo automatico: acceso, ogni {} minuti, dentro il servizio (non serve cron).\n\
              Per toglierlo: loglem service uninstall",
             self.manager,
             self.file.display(),
             self.check_minutes
-        )
+        );
+        if self.linger == Some(false) {
+            let user = std::env::var("USER").unwrap_or_else(|_| "UTENTE".into());
+            text.push_str(&format!(
+                "\nPer farlo partire all'accensione del computer e non fermarlo quando esci \
+                 da SSH, esegui: loginctl enable-linger {user}"
+            ));
+        }
+        text
     }
 }
 
@@ -120,6 +149,7 @@ pub fn install(dir: &Path, start: bool) -> Result<Report> {
             "systemd"
         },
         check_minutes: crate::config::load(dir)?.alerts.monitor.minutes,
+        linger: lingering(),
     })
 }
 
@@ -512,6 +542,7 @@ mod tests {
             file: PathBuf::from("/home/user/.config/systemd/user/loglem.service"),
             manager: "systemd",
             check_minutes: 5,
+            linger: Some(false),
         }
         .text();
         assert!(text.contains("loglem.service"));
