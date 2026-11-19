@@ -6,7 +6,7 @@
 
 Loglem lee tus registros, los copia en un archivo donde se puede buscar y borra las copias cuando pasa el tiempo que elegiste. Usas una página web o un menú en el terminal. Sin archivos de configuración.
 
-> **Estado: en desarrollo (beta).** Funciona y está probado en macOS. Todavía no hay una versión publicada, y algunas partes no están probadas en un Linux real. Consulta los [límites](docs/es/limitations.md).
+> **Estado: en desarrollo (beta).** Funciona y está probado en macOS. En Linux se ha probado con journald, Podman, logrotate, Caddy y el servicio systemd. Todavía no hay una versión publicada. Consulta los [límites](docs/es/limitations.md).
 >
 > - **Antes de usarlo.** Se recomienda probarlo primero en una máquina de pruebas y hacer una copia de seguridad.
 > - **Borrado de archivos.** Activarlo es irreversible. Como Loglem aún está en fase de pruebas, se recomienda probar sus funciones en una máquina de pruebas, o valorarlo bien antes de activar el borrado.

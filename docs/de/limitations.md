@@ -15,7 +15,7 @@ Was Loglem nicht kann oder nicht verspricht.
 - Die Filter für Schweregrad, Statuscode und Pfad lesen den Text der Zeile. Sie kennen Caddy (JSON), Nginx und Apache (combined) und das Journal. Andere Formate findet man nur über den Text.
 - Statistiken funktionieren mit Caddy-Logs als JSON und Nginx/Apache im Format combined.
 - Reguläre Ausdrücke gibt es noch nicht.
-- Statistiken halten jede verschiedene IP und Seite des Zeitraums im Speicher. Bei Logs mit Millionen verschiedener IPs braucht es mehr RAM (etwa 56 Byte je verschiedene IP oder Seite).
+- Die Ranglisten der Statistiken nutzen bis zu 256 Adressen und 256 Pfade pro Zusammenfassung. Wenn die Zähler voll sind, zeigt die Seite «Näherungsweise Rangliste». Anzahl der Anfragen und Statuscodes bleiben exakt.
 
 ## Was verloren gehen kann
 
@@ -37,4 +37,6 @@ Was Loglem nicht kann oder nicht verspricht.
 
 Getestet auf macOS mit Podman, journald (in einem Linux-Container), Caddy, Chrome und einer echten Zeitstempel-Autorität: Quellen über die Seite hinzufügen, Suche, Live-Ansicht, Anmeldung mit Passwort, Neustart ohne verlorene oder doppelte Zeilen, Ablauf, Caddy-Rotation, Reverse-Proxy, Sicherung und Wiederherstellung, Beweismodus, Löschen.
 
-Nicht getestet: der systemd-Dienst auf einem echten Linux, ein echter Kubernetes-Cluster (es wurde ein unechtes `kubectl` benutzt), der launchd-Agent von macOS, Windows und ein Update aus einer veröffentlichten Version.
+Getestet auf einem echten Linux (Linux Mint 22.3, systemd 255, glibc 2.39, x86_64): journald, Podman 4.9 (journald- und Datei-Treiber, neu erstellte und entfernte Container), logrotate (`create`, `delaycompress`, `dateext`, `copytruncate`), Caddy 2.11 mit eigener Rotation, der systemd-Dienst (Installation, Neustart nach `kill -9`, sauberer Neustart, `check`, Deinstallation), Sicherung, Prüfung und Wiederherstellung. Details und Zahlen: [performance.md](performance.md).
+
+Nie getestet auf: einem echten Kubernetes-Cluster, Docker, Nginx und Apache, ARM64, einem echten Neustart der Maschine und einem Update aus einer veröffentlichten Version.

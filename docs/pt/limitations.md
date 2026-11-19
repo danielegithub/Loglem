@@ -15,7 +15,7 @@ O que o Loglem não faz, ou não promete.
 - Os filtros de gravidade, código e caminho leem o texto da linha. Conhecem o Caddy (JSON), Nginx e Apache (combined) e o journal. Outros formatos só se encontram pesquisando o texto.
 - As estatísticas funcionam com logs do Caddy em JSON e do Nginx/Apache em formato combined.
 - Ainda não há expressões regulares.
-- As estatísticas guardam em memória cada IP e cada página diferentes do período. Com logs de milhões de IPs diferentes é preciso mais RAM (cerca de 56 bytes por IP ou página diferente).
+- Os rankings das estatísticas usam até 256 endereços e 256 caminhos por resumo. Quando os contadores enchem, a página mostra «Classificação aproximada». As contagens de pedidos e de códigos continuam exatas.
 
 ## O que se pode perder
 
@@ -37,4 +37,6 @@ O que o Loglem não faz, ou não promete.
 
 Testado no macOS com Podman, journald (num contentor Linux), Caddy, Chrome e uma autoridade de carimbo de tempo real: adicionar fontes pela página, pesquisa, direto, acesso com palavra-passe, reinício sem linhas perdidas nem duplicadas, expiração, rotação do Caddy, proxy inverso, cópia e restauro, modo prova, apagar.
 
-Não testado: o serviço systemd num Linux real, um cluster Kubernetes real (usou-se um `kubectl` falso), o agente launchd do macOS, o Windows e uma atualização a partir de uma versão publicada.
+Testado num Linux real (Linux Mint 22.3, systemd 255, glibc 2.39, x86_64): journald, Podman 4.9 (drivers journald e de ficheiro, contentores recriados e removidos), logrotate (`create`, `delaycompress`, `dateext`, `copytruncate`), Caddy 2.11 com a sua própria rotação, o serviço systemd (instalação, reinício após `kill -9`, reinício limpo, `check`, desinstalação), cópia, verificação e restauro. Detalhes e números: [performance.md](performance.md).
+
+Nunca testado em: um cluster Kubernetes real, Docker, Nginx e Apache, ARM64, um reinício real da máquina e uma atualização a partir de uma versão publicada.

@@ -6,7 +6,7 @@
 
 Loglem liest Ihre Logs, kopiert sie in ein durchsuchbares Archiv und löscht die Kopien, wenn die gewählte Zeit abgelaufen ist. Sie nutzen eine Webseite oder ein Terminalmenü. Keine Konfigurationsdateien.
 
-> **Status: in Entwicklung (Beta).** Es funktioniert und ist auf macOS getestet. Es gibt noch keine veröffentlichte Version, und einige Teile sind auf einem echten Linux nicht getestet. Siehe die [Grenzen](docs/de/limitations.md).
+> **Status: in Entwicklung (Beta).** Es funktioniert und ist auf macOS getestet. Unter Linux wurde es mit journald, Podman, logrotate, Caddy und dem systemd-Dienst getestet. Es gibt noch keine veröffentlichte Version. Siehe die [Grenzen](docs/de/limitations.md).
 >
 > - **Vor der Benutzung.** Es wird empfohlen, es zuerst auf einem Testrechner auszuprobieren und ein Backup zu machen.
 > - **Dateien löschen.** Das Einschalten ist nicht rückgängig zu machen. Da sich Loglem noch im Test befindet, wird empfohlen, die Funktionen auf einem Testrechner auszuprobieren oder gut zu überlegen, bevor Sie das Löschen einschalten.

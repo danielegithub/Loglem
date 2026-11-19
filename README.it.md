@@ -6,7 +6,7 @@
 
 Loglem legge i tuoi log, li copia in un archivio in cui si può cercare e cancella le copie quando passa il tempo che hai scelto. Usi una pagina web o un menu nel terminale. Niente file di configurazione.
 
-> **Stato: in fase di sviluppo (beta).** Funziona ed è provato su macOS. Non c'è ancora una versione pubblicata, e alcune parti non sono provate su un vero Linux. Vedi i [limiti](docs/it/limitations.md).
+> **Stato: in fase di sviluppo (beta).** Funziona ed è provato su macOS. Su Linux è stato provato con journald, Podman, logrotate, Caddy e il servizio systemd. Non c'è ancora una versione pubblicata. Vedi i [limiti](docs/it/limitations.md).
 >
 > - **Prima di usarlo.** Si consiglia di provarlo prima su una macchina di prova e di fare un backup.
 > - **Cancellazione dei file.** Attivarla è irreversibile. Essendo ancora in fase di test, si consiglia di provarne le funzionalità su una macchina di prova, o di valutare bene prima di attivare la cancellazione.

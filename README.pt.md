@@ -6,7 +6,7 @@
 
 O Loglem lê os seus logs, copia-os para um arquivo onde se pode pesquisar e apaga as cópias quando passa o tempo que escolheu. Usa uma página web ou um menu no terminal. Sem ficheiros de configuração.
 
-> **Estado: em desenvolvimento (beta).** Funciona e está testado no macOS. Ainda não há versão publicada, e algumas partes não estão testadas num Linux real. Veja os [limites](docs/pt/limitations.md).
+> **Estado: em desenvolvimento (beta).** Funciona e está testado no macOS. No Linux foi testado com journald, Podman, logrotate, Caddy e o serviço systemd. Ainda não há versão publicada. Veja os [limites](docs/pt/limitations.md).
 >
 > - **Antes de o usar.** Recomenda-se experimentá-lo primeiro numa máquina de teste e fazer uma cópia de segurança.
 > - **Apagar ficheiros.** Ativá-lo é irreversível. Como o Loglem ainda está em fase de teste, recomenda-se experimentar as funções numa máquina de teste, ou ponderar bem antes de ativar o apagamento.

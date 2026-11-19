@@ -15,7 +15,7 @@ What Loglem does not do, or does not promise.
 - Severity, status code and path filters read the text of the line. They know Caddy (JSON), Nginx and Apache (combined), and the journal. Other formats are only found by text.
 - Statistics work on Caddy JSON and Nginx/Apache combined logs.
 - No regular expressions yet.
-- Statistics keep every different IP and page of the period in memory. On logs with millions of different IPs they need more RAM (about 56 bytes per different IP or page).
+- Statistics rankings use up to 256 addresses and 256 paths per summary. When the counters fill up, the page shows "approximate ranking". Request counts and status codes stay exact.
 
 ## What can be lost
 
@@ -37,4 +37,6 @@ What Loglem does not do, or does not promise.
 
 Tested on macOS with real Podman, journald (in a Linux container), Caddy, Chrome and a real time-stamp authority: adding sources from the page, search, live view, login, restart without lost or duplicated lines, expiry, Caddy rotation, reverse proxy, backup and restore, proof mode, erase.
 
-Not tested: the systemd service on real Linux, a real Kubernetes cluster (a fake `kubectl` was used), the macOS launchd agent, Windows, and an update from a published release.
+Tested on real Linux (Linux Mint 22.3, systemd 255, glibc 2.39, x86_64): journald, Podman 4.9 (journald and file drivers, recreated and removed containers), logrotate (`create`, `delaycompress`, `dateext`, `copytruncate`), Caddy 2.11 with its own rotation, the systemd service (install, restart after `kill -9`, clean restart, `check`, uninstall), backup, verification and restore. Details and numbers: [performance.md](performance.md).
+
+Never tested on: a real Kubernetes cluster, Docker, Nginx and Apache, ARM64, a real reboot of the machine, and an update from a published release.

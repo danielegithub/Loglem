@@ -6,7 +6,7 @@
 
 Loglem lit vos journaux, les copie dans une archive où l'on peut chercher, et supprime les copies quand le délai choisi est passé. Vous utilisez une page web ou un menu dans le terminal. Aucun fichier de configuration.
 
-> **État : en cours de développement (bêta).** Ça fonctionne et c'est testé sur macOS. Il n'y a pas encore de version publiée, et certaines parties ne sont pas testées sur un vrai Linux. Voir les [limites](docs/fr/limitations.md).
+> **État : en cours de développement (bêta).** Ça fonctionne et c'est testé sur macOS. Sur Linux, il a été testé avec journald, Podman, logrotate, Caddy et le service systemd. Il n'y a pas encore de version publiée. Voir les [limites](docs/fr/limitations.md).
 >
 > - **Avant de l'utiliser.** Il est conseillé de l'essayer d'abord sur une machine de test et de faire une sauvegarde.
 > - **Suppression des fichiers.** L'activer est irréversible. Loglem étant encore en phase de test, il est conseillé d'en essayer les fonctions sur une machine de test, ou de bien réfléchir avant d'activer la suppression.

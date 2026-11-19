@@ -15,7 +15,7 @@ Ce que Loglem ne fait pas, ou ne promet pas.
 - Les filtres de gravité, de code et de chemin lisent le texte de la ligne. Ils connaissent Caddy (JSON), Nginx et Apache (combined) et le journal. Les autres formats ne se trouvent qu'en cherchant le texte.
 - Les statistiques marchent avec les journaux Caddy en JSON et Nginx/Apache au format combined.
 - Pas encore d'expressions régulières.
-- Les statistiques gardent en mémoire chaque IP et chaque page différentes de la période. Avec des journaux de millions d'IP différentes, il faut plus de RAM (environ 56 octets par IP ou page différente).
+- Les classements des statistiques utilisent jusqu'à 256 adresses et 256 chemins par résumé. Quand les compteurs sont pleins, la page affiche « Classement approximatif ». Les nombres de requêtes et de codes restent exacts.
 
 ## Ce qui peut être perdu
 
@@ -37,4 +37,6 @@ Ce que Loglem ne fait pas, ou ne promet pas.
 
 Testé sur macOS avec Podman, journald (dans un conteneur Linux), Caddy, Chrome et une vraie autorité d'horodatage : ajout de sources depuis la page, recherche, direct, connexion avec mot de passe, redémarrage sans ligne perdue ni dupliquée, expiration, rotation de Caddy, reverse proxy, sauvegarde et restauration, mode preuve, effacement.
 
-Non testé : le service systemd sur un vrai Linux, un vrai cluster Kubernetes (un faux `kubectl` a été utilisé), l'agent launchd de macOS, Windows et une mise à jour depuis une version publiée.
+Testé sur un vrai Linux (Linux Mint 22.3, systemd 255, glibc 2.39, x86_64) : journald, Podman 4.9 (pilotes journald et fichier, conteneurs recréés et supprimés), logrotate (`create`, `delaycompress`, `dateext`, `copytruncate`), Caddy 2.11 avec sa propre rotation, le service systemd (installation, redémarrage après `kill -9`, redémarrage propre, `check`, désinstallation), sauvegarde, vérification et restauration. Détails et chiffres : [performance.md](performance.md).
+
+Jamais testé sur : un vrai cluster Kubernetes, Docker, Nginx et Apache, ARM64, un vrai redémarrage de la machine et une mise à jour depuis une version publiée.
