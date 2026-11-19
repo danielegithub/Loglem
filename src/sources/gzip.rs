@@ -124,40 +124,55 @@ pub fn collect(store: &mut Archive, path: &Path, now: i64) -> Result<usize> {
         return Ok(0);
     }
 
-    // Cerca il file già letto di cui questo è la versione compressa: il più lungo il cui
-    // inizio coincide, riga per riga, con quello compresso e che è ancora tutto nell'archivio.
-    let mut best: Option<Cursor> = None;
-    let mut best_id = String::new();
-    for candidate in &cursors {
-        if candidate.offset > scan.size
-            || best.as_ref().is_some_and(|b| b.offset >= candidate.offset)
-        {
+    // Cerca il file già letto di cui questo è la versione compressa.
+    let (file_id, cursor_id, mut cursor) = match best_prefix(store, &cursors, scan.size, &scan.prefixes)? {
+        Some(found) => (
+            found.file_id.clone(),
+            // Il punto di lettura del file originale non si tocca: potrebbe essere ancora in uso.
+            format!("gz:{}", scan.digest),
+            Cursor {
+                offset: found.offset,
+                generation: found.generation,
+                anchor: String::new(),
+                chain: found.chain,
+                lines: found.lines,
+            },
+        ),
+        None => {
+            let id = format!("gz:{}", scan.digest);
+            (id.clone(), id, Cursor::default())
+        }
+    };
+
+    let added = import(store, path, &file_id, &cursor_id, &mut cursor, now)?;
+    store.set_state(&done_key(&scan.digest), &file_id)?;
+    Ok(added)
+}
+
+/// Il file già letto il cui inizio coincide, riga per riga, con questo contenuto: il più
+/// lungo tra quelli ancora tutti nell'archivio. `prefixes` sono catena e righe del nuovo
+/// contenuto ai punti di lettura noti (byte, catena, righe).
+pub(crate) fn best_prefix(
+    store: &Archive,
+    cursors: &[crate::archive::FileCursor],
+    size: u64,
+    prefixes: &[(u64, String, u64)],
+) -> Result<Option<crate::archive::FileCursor>> {
+    let mut best: Option<crate::archive::FileCursor> = None;
+    for candidate in cursors {
+        if candidate.offset > size || best.as_ref().is_some_and(|b| b.offset >= candidate.offset) {
             continue;
         }
-        let same_start = scan.prefixes.iter().any(|(o, c, l)| {
-            *o == candidate.offset && *c == candidate.chain && *l == candidate.lines
-        });
+        let same_start = prefixes
+            .iter()
+            .any(|(o, c, l)| *o == candidate.offset && *c == candidate.chain && *l == candidate.lines);
         if same_start
             && store.rows_of_file(&candidate.file_id, candidate.generation)? == candidate.lines
         {
-            best_id = candidate.file_id.clone();
-            best = Some(Cursor {
-                offset: candidate.offset,
-                generation: candidate.generation,
-                anchor: String::new(),
-                chain: candidate.chain.clone(),
-                lines: candidate.lines,
-            });
+            best = Some(candidate.clone());
         }
     }
-    let (file_id, mut cursor) = match best {
-        Some(found) => (best_id, found),
-        None => (format!("gz:{}", scan.digest), Cursor::default()),
-    };
-
-    let added = import(store, path, &file_id, &mut cursor, now)?;
-    store.set_state(&done_key(&scan.digest), &file_id)?;
-    Ok(added)
+    Ok(best)
 }
 
 /// Legge le righe da `cursor.offset` in poi e le salva con lo stesso schema dei file.
@@ -165,6 +180,7 @@ fn import(
     store: &mut Archive,
     path: &Path,
     file_id: &str,
+    cursor_id: &str,
     cursor: &mut Cursor,
     now: i64,
 ) -> Result<usize> {
@@ -218,6 +234,6 @@ fn import(
         cursor.anchor = util::digest(&last);
         cursor.chain = chain.clone();
         cursor.lines = lines;
-        added += store.save_file_batch(file_id, cursor, &entries)?;
+        added += store.save_file_batch(cursor_id, cursor, &entries)?;
     }
 }

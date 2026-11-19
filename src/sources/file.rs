@@ -188,10 +188,29 @@ pub fn collect(store: &mut Archive, path: &Path, complete: bool, now: i64) -> Re
         bail!("Source changed while opening it; retrying later");
     }
     let mut cursor = store.cursor(&id)?;
+    // Le righe si salvano con l'identità del file a cui appartengono. Un file nuovo il cui inizio
+    // è già nell'archivio (la copia ruotata di `copytruncate`) continua quel file: importa solo
+    // la parte mancante.
+    let mut entry_id = id.clone();
+    if cursor.offset == 0 && cursor.chain.is_empty() {
+        if let Some(found) = known_prefix(store, &mut file, opened.len())? {
+            store.set_state(&format!("{}{id}", crate::archive::COPY_OF), &found.file_id)?;
+            cursor = Cursor {
+                offset: found.offset,
+                generation: found.generation,
+                anchor: anchor(&mut file, found.offset)?,
+                chain: found.chain,
+                lines: found.lines,
+            };
+            entry_id = found.file_id;
+        }
+    }
     let mut changed = false;
     if cursor.offset > opened.len()
         || (cursor.offset > 0 && anchor(&mut file, cursor.offset)? != cursor.anchor)
     {
+        // Il vecchio contenuto resta riconoscibile: una copia ruotata non verrà riletta.
+        store.retire_cursor(&id, &cursor)?;
         cursor = Cursor {
             generation: cursor.generation + 1,
             ..Cursor::default()
@@ -230,8 +249,8 @@ pub fn collect(store: &mut Archive, path: &Path, complete: bool, now: i64) -> Re
             chain = util::chain_next(&chain, &bytes);
             lines += 1;
             entries.push(Entry {
-                key: format!("file:{id}:{}:{next_offset}", cursor.generation),
-                file_id: Some(id.clone()),
+                key: format!("file:{entry_id}:{}:{next_offset}", cursor.generation),
+                file_id: Some(entry_id.clone()),
                 generation: cursor.generation,
                 offset: next_offset as i64,
                 event_ns,
@@ -272,6 +291,42 @@ pub fn collect(store: &mut Archive, path: &Path, complete: bool, now: i64) -> Re
         )?;
     }
     Ok(added)
+}
+
+/// Il file già archiviato (anche troncato in seguito) di cui questo file è una copia o il
+/// seguito: il più lungo il cui inizio coincide byte per byte.
+fn known_prefix(
+    store: &Archive,
+    file: &mut File,
+    len: u64,
+) -> Result<Option<crate::archive::FileCursor>> {
+    let cursors = store.file_cursors()?;
+    let wanted: std::collections::HashSet<u64> =
+        cursors.iter().map(|c| c.offset).filter(|o| *o <= len).collect();
+    let Some(&last) = wanted.iter().max() else {
+        return Ok(None);
+    };
+    file.seek(SeekFrom::Start(0))?;
+    let mut reader = BufReader::new((&*file).take(last));
+    let (mut chain, mut lines, mut size) = (String::new(), 0u64, 0u64);
+    let mut prefixes = Vec::new();
+    loop {
+        let mut line = Vec::new();
+        let count = reader
+            .by_ref()
+            .take((MAX_LINE_BYTES + 1) as u64)
+            .read_until(b'\n', &mut line)?;
+        if count == 0 || count > MAX_LINE_BYTES || !line.ends_with(b"\n") {
+            break;
+        }
+        chain = util::chain_next(&chain, &line);
+        lines += 1;
+        size += count as u64;
+        if wanted.contains(&size) {
+            prefixes.push((size, chain.clone(), lines));
+        }
+    }
+    crate::sources::gzip::best_prefix(store, &cursors, size, &prefixes)
 }
 
 /// Catena di impronte, numero di righe e byte di un file, leggendolo tutto

@@ -81,6 +81,7 @@ fn migrate_v1_to_v2(db: &Connection) -> Result<()> {
 }
 
 /// Il punto di lettura salvato di un file.
+#[derive(Clone)]
 pub struct FileCursor {
     pub file_id: String,
     pub generation: i64,
@@ -525,8 +526,15 @@ impl Archive {
              WHERE byte_offset > 0 AND chain != ''",
         )?;
         let rows = stmt.query_map([], |r| {
+            let stored: String = r.get(0)?;
+            // Un contenuto ritirato da un troncamento (`retired:<file>:<generazione>`) vale
+            // come il file da cui viene: le sue righe sono salvate con quella identità.
+            let file_id = stored
+                .strip_prefix(RETIRED)
+                .and_then(|rest| rest.rsplit_once(':'))
+                .map_or(stored.clone(), |(id, _)| id.to_owned());
             Ok(FileCursor {
-                file_id: r.get(0)?,
+                file_id,
                 generation: r.get(1)?,
                 offset: r.get::<_, i64>(2)? as u64,
                 chain: r.get(3)?,
@@ -534,6 +542,27 @@ impl Archive {
             })
         })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Un file è stato troncato (per esempio da `copytruncate` di logrotate): il suo vecchio
+    /// contenuto resta riconoscibile, così una copia ruotata non viene importata di nuovo.
+    pub fn retire_cursor(&self, file_id: &str, cursor: &Cursor) -> Result<()> {
+        if cursor.offset == 0 || cursor.chain.is_empty() {
+            return Ok(());
+        }
+        self.db.execute(
+            "INSERT OR REPLACE INTO cursors(file_id, byte_offset, generation, anchor, chain, lines) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                format!("{RETIRED}{file_id}:{}", cursor.generation),
+                cursor.offset as i64,
+                cursor.generation,
+                cursor.anchor,
+                cursor.chain,
+                cursor.lines as i64
+            ],
+        )?;
+        Ok(())
     }
 
     /// Dopo aver riscritto un file originale (tolte righe): il file ha una nuova identità e un
@@ -569,13 +598,28 @@ impl Archive {
 
     /// Quante righe di questa lettura di file sono ancora nell'archivio (le scadute mancano).
     pub fn rows_of_file(&self, file_id: &str, generation: i64) -> Result<u64> {
-        Ok(self.db.query_row(
-            "SELECT (SELECT count(*) FROM entries WHERE file_id=?1 AND generation=?2)+coalesce((SELECT sum(lines) FROM blocks WHERE file_ref=(SELECT id FROM files WHERE name=?1) AND generation=?2),0)",
-            params![file_id, generation],
-            |r| r.get::<_, i64>(0),
-        )? as u64)
+        let count = |id: &str| -> Result<u64> {
+            Ok(self.db.query_row(
+                "SELECT (SELECT count(*) FROM entries WHERE file_id=?1 AND generation=?2)+coalesce((SELECT sum(lines) FROM blocks WHERE file_ref=(SELECT id FROM files WHERE name=?1) AND generation=?2),0)",
+                params![id, generation],
+                |r| r.get::<_, i64>(0),
+            )? as u64)
+        };
+        let own = count(file_id)?;
+        if own > 0 {
+            return Ok(own);
+        }
+        match self.get_state(&format!("{COPY_OF}{file_id}"))? {
+            Some(original) => count(&original),
+            None => Ok(0),
+        }
     }
 }
+
+/// Prefisso dei punti di lettura di file che sono stati troncati.
+const RETIRED: &str = "retired:";
+/// Stato: questo file è una copia di un altro già archiviato (`copy_of:<file>` = `<originale>`).
+pub const COPY_OF: &str = "copy_of:";
 
 #[cfg(test)]
 mod tests {
