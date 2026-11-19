@@ -16,6 +16,16 @@ pub(crate) const VIEW: &str = "
 // id, deduplication key, byte offset, event time, collection time, timestamp origin, message
 type Row = (i64, String, i64, i64, i64, String, String);
 
+/// Toglie le chiavi di un blocco: si ricavano dal blocco stesso, quindi prima di cancellarlo.
+fn drop_keys(db: &Connection, block: i64) -> Result<()> {
+    db.execute(
+        "DELETE FROM block_keys WHERE k IN (SELECT loglem_key(j.value->>1) FROM blocks b \
+         CROSS JOIN json_each(loglem_decode(b.data)) j WHERE b.id=?)",
+        [block],
+    )?;
+    Ok(())
+}
+
 pub(crate) fn pack(db: &Connection, now: i64) -> Result<()> {
     let cutoff = now.saturating_sub(300_000_000_000);
     let mut packed = 0;
@@ -99,7 +109,7 @@ pub(crate) fn pack(db: &Connection, now: i64) -> Result<()> {
             params![file,generation,ids[0],ids.last(),low[0],high[0],low[1],high[1],low[2],high[2],ids.len() as i64,data])?;
         let block = tx.last_insert_rowid();
         for key in keys {
-            tx.execute("INSERT INTO block_keys VALUES(?,?)", params![key, block])?;
+            tx.execute("INSERT INTO block_keys VALUES(loglem_key(?),?)", params![key, block])?;
         }
         tx.execute_batch("INSERT INTO state VALUES('moving_block','1')")?;
         tx.execute(
@@ -131,7 +141,7 @@ pub(crate) fn unpack(
     tx.execute_batch("INSERT INTO state VALUES('moving_block','1')")?;
     for id in ids {
         tx.execute("INSERT INTO entries SELECT id,record_key,file_id,generation,byte_offset,event_ns,collected_ns,timestamp_origin,message FROM log_rows WHERE block_id=?", [id])?;
-        tx.execute("DELETE FROM block_keys WHERE block_id=?", [id])?;
+        drop_keys(&tx, id)?;
         tx.execute("DELETE FROM blocks WHERE id=?", [id])?;
     }
     tx.execute_batch("DELETE FROM state WHERE key='moving_block'")?;
@@ -260,7 +270,7 @@ pub(crate) fn discard(
                 last.div_euclid(86_400_000_000_000)
             ],
         )?;
-        tx.execute("DELETE FROM block_keys WHERE block_id=?", [id])?;
+        drop_keys(&tx, id)?;
         tx.execute("DELETE FROM blocks WHERE id=?", [id])?;
         removed += n;
     }

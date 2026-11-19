@@ -9,7 +9,7 @@ use rusqlite::{params, types::Value, Connection, OptionalExtension, Transaction}
 use std::{path::Path, time::Duration};
 
 const GAPS: &str = "gaps";
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 /// Versione 2: niente più copia identica di ogni riga (`raw`). Per ogni file già letto si
 /// calcola la catena di impronte dalle copie che ci sono ancora, poi la colonna sparisce.
@@ -126,6 +126,50 @@ fn repair_entry_total(db: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Le chiavi di deduplicazione di journal, Podman e Kubernetes (72 byte di testo) si salvano
+/// come i primi 16 byte della loro impronta SHA-256: la probabilità di una collisione è
+/// trascurabile e l'archivio occupa molto meno.
+fn register_key(db: &Connection) -> Result<()> {
+    use rusqlite::functions::FunctionFlags;
+    use sha2::{Digest, Sha256};
+    db.create_scalar_function(
+        "loglem_key",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let text = ctx.get_raw(0).as_str()?;
+            Ok(Sha256::digest(text.as_bytes())[..16].to_vec())
+        },
+    )?;
+    Ok(())
+}
+
+/// Archivi con le chiavi in chiaro (schema 4): le porta alla forma compatta, senza perdere
+/// nessuna chiave e senza l'indice che le copiava una seconda volta.
+fn compact_block_keys(db: &Connection) -> Result<()> {
+    let old: i64 = db.query_row(
+        "SELECT count(*) FROM pragma_table_info('block_keys') WHERE name='key'",
+        [],
+        |r| r.get(0),
+    )?;
+    if old == 0 {
+        return Ok(());
+    }
+    let tx = db.unchecked_transaction()?;
+    tx.execute_batch(
+        "DROP INDEX IF EXISTS keys_block; \
+         ALTER TABLE block_keys RENAME TO block_keys_old; \
+         CREATE TABLE block_keys(k BLOB PRIMARY KEY, block_id INTEGER NOT NULL) WITHOUT ROWID; \
+         INSERT OR IGNORE INTO block_keys SELECT loglem_key(key), block_id FROM block_keys_old; \
+         DROP TABLE block_keys_old;",
+    )?;
+    tx.commit()?;
+    let mut vacuum = db.prepare("PRAGMA incremental_vacuum")?;
+    let mut pages = vacuum.query([])?;
+    while pages.next()?.is_some() {}
+    Ok(())
+}
+
 impl Archive {
     pub fn open(path: &Path) -> Result<Self> {
         private_dir(
@@ -134,6 +178,7 @@ impl Archive {
         )?;
         let db = Connection::open(path)?;
         db.busy_timeout(Duration::from_secs(5))?;
+        register_key(&db)?;
         let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version > SCHEMA_VERSION {
             bail!("Archive schema {version} needs a newer Loglem; no changes made");
@@ -168,6 +213,10 @@ impl Archive {
             tx.commit()?;
         }
         repair_entry_total(&db)?;
+        compact_block_keys(&db)?;
+        if version == 4 {
+            db.execute_batch("PRAGMA user_version=5")?;
+        }
         Self::with_log_rows(db)
     }
 
@@ -176,6 +225,7 @@ impl Archive {
         let db = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         db.busy_timeout(Duration::from_millis(250))?;
         db.execute_batch("PRAGMA cache_size=-512; PRAGMA mmap_size=0")?;
+        register_key(&db)?;
         Self::with_log_rows(db)
     }
 
@@ -258,7 +308,7 @@ impl Archive {
         let mut added = 0;
         let mut last:i64=tx.query_row("SELECT max(coalesce((SELECT max(id) FROM entries),0),coalesce((SELECT CAST(value AS INTEGER) FROM state WHERE key='highest_id'),0))",[],|r|r.get(0))?;
         let mut insert=tx.prepare_cached("INSERT OR IGNORE INTO entries(id,record_key,file_id,generation,byte_offset,event_ns,collected_ns,timestamp_origin,message) VALUES(?,?,?,?,?,?,?,?,?)")?;
-        let mut seen=tx.prepare_cached("SELECT EXISTS(SELECT 1 FROM block_keys WHERE key=?1) OR EXISTS(SELECT 1 FROM blocks b JOIN files f ON f.id=b.file_ref WHERE f.name=?2 AND b.generation=?3 AND b.last_offset>=?4 AND b.first_offset<=?4 AND EXISTS(SELECT 1 FROM json_each(loglem_decode(b.data)) j WHERE j.value->>1=?1))")?;
+        let mut seen=tx.prepare_cached("SELECT EXISTS(SELECT 1 FROM block_keys WHERE k=loglem_key(?1)) OR EXISTS(SELECT 1 FROM blocks b JOIN files f ON f.id=b.file_ref WHERE f.name=?2 AND b.generation=?3 AND b.last_offset>=?4 AND b.first_offset<=?4 AND EXISTS(SELECT 1 FROM json_each(loglem_decode(b.data)) j WHERE j.value->>1=?1))")?;
         for e in entries {
             if seen.query_row(params![e.key, e.file_id, e.generation, e.offset], |r| {
                 r.get::<_, bool>(0)

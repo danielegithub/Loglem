@@ -464,7 +464,8 @@ pub fn migrate_legacy(store: &Archive, container: &str) -> Result<()> {
     if store.get_state("podman_scoped_keys")?.is_none() {
         crate::blocks::unpack(
             &store.db,
-            "id IN (SELECT block_id FROM block_keys WHERE key LIKE 'podman:%')",
+            "id IN (SELECT b.id FROM blocks b CROSS JOIN json_each(loglem_decode(b.data)) j \
+             WHERE j.value->>1 LIKE 'podman:%')",
             &[],
         )?;
         store.db.execute(

@@ -9,6 +9,5 @@ CREATE TABLE IF NOT EXISTS blocks(
 CREATE INDEX IF NOT EXISTS blocks_offsets ON blocks(file_ref,generation,last_offset);
 CREATE INDEX IF NOT EXISTS blocks_time ON blocks(last_ns);
 CREATE INDEX IF NOT EXISTS blocks_first ON blocks(first_ns);
-CREATE TABLE IF NOT EXISTS block_keys(key TEXT PRIMARY KEY, block_id INTEGER NOT NULL) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS keys_block ON block_keys(block_id);
-PRAGMA user_version=4;
+CREATE TABLE IF NOT EXISTS block_keys(k BLOB PRIMARY KEY, block_id INTEGER NOT NULL) WITHOUT ROWID;
+PRAGMA user_version=5;
